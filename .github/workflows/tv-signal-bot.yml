@@ -27,9 +27,11 @@ jobs:
     timeout-minutes: 15   # allows for the in-script wait to the bar boundary
 
     steps:
-      - uses: actions/checkout@v4
+      # v5 / v6 run on Node 24. The older v4 / v5 target the deprecated
+      # Node 20 and are only being force-migrated by the runner for now.
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
