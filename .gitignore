@@ -47,3 +47,10 @@ logs/
 # Local testing
 .cache/
 *.tmp
+
+# Local editor / agent settings
+.claude/
+
+# Stale artifacts from abandoned deployment paths
+cloud-function/
+data/
