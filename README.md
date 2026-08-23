@@ -122,6 +122,7 @@ within a minute — either signals, or a "No signals" confirmation.
 | `tv_signal_bot.py` | The bot — fetch, evaluate, alert |
 | `tradingview_indicators.py` | UT Bot + LinReg implementations |
 | `verify_tvdatafeed_quality.py` | Re-check data parity against your chart at any time |
+| `measure_feed_lag.py` | Measure feed lag (bar close → availability) |
 | `requirements.txt` | Dependencies |
 | `.github/workflows/tv-signal-bot.yml` | Schedule |
 | `cloud_nifty_bot.py` | Dormant yfinance fallback — not wired to any workflow |
