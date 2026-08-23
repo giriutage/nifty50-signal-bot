@@ -1,0 +1,40 @@
+name: NIFTY50 Signal Bot
+
+# NSE 30-min bars close at :15 and :45 IST. We run 5 minutes after each
+# close so the just-closed bar is fully settled before it is evaluated.
+#   IST :20  ->  UTC :50 (previous hour)
+#   IST :50  ->  UTC :20
+# Market 09:15-15:30 IST covers UTC 03:45-10:00.
+on:
+  schedule:
+    - cron: '20,50 4-9 * * 1-5'   # IST 09:50 .. 15:20
+    - cron: '20 10 * * 1-5'       # IST 15:50 (final bar of the session)
+  workflow_dispatch:              # manual "Run workflow" button
+
+concurrency:
+  group: signal-bot
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Scan for signals
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+        run: python tv_signal_bot.py

@@ -1,0 +1,5 @@
+﻿google-cloud-secret-manager==2.16.1
+pyzdata==1.0.4
+pandas==2.0.3
+requests==2.31.0
+python-dotenv==1.0.0

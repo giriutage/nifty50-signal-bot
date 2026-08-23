@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cd \"E:\\\\CLAUDECODE\\\\tradingview_data_fetch\\\\tradingview-mcp\"; node src/cli/index.js values 2>&1 | python3 -c \"import json, sys; data = json.load\\(sys.stdin\\); print\\('Success:', data.get\\('success'\\)\\); [print\\(f\\\\\"  {s['name']}: Buy={s.get\\('values',{}\\).get\\('Buy','N/A'\\)}\\\\\"\\) for s in data.get\\('studies', []\\)]\")",
+      "Bash(timeout 35 python tradingview_alert_monitor.py)",
+      "Bash(timeout 40 python tradingview_alert_monitor.py)",
+      "Bash(tee /tmp/test_final.txt)",
+      "PowerShell($gitPath = \"C:\\\\Program Files\\\\Git\\\\bin\\\\git.exe\"; if \\(Test-Path $gitPath\\) { Write-Host \"Git found at: $gitPath\" } else { Write-Host \"Git not found at expected location\" }; Get-Command git -ErrorAction SilentlyContinue)"
+    ]
+  }
+}
