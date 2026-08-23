@@ -34,10 +34,13 @@ forming.
 
 This matters. The forming bar's close keeps moving until the bar completes, so
 evaluating it produces **repainting** — an alert appears, then the bar closes the
-other way and the signal vanishes. Trailing by one bar makes every alert final.
+other way and the signal vanishes. Only closed bars are evaluated, so every alert
+is final.
 
-The cost: an alert for the 11:15 bar arrives shortly after 11:45. That delay is
-deliberate.
+The closed bar is selected **by timestamp, not by position**. A bar labelled `T`
+closes at `T + 30min`, so the newest bar satisfying `T + 30min <= now` is the one
+to evaluate. Positional indexing (`-2`) silently picks the wrong bar whenever the
+forming bar has not yet been emitted — which made alerts a full bar stale.
 
 ---
 
@@ -59,23 +62,33 @@ direction (BUY+green / SELL+red), otherwise `MEDIUM`.
 
 ---
 
-## Schedule
+## Timing
 
-NSE 30-min bars close at `:15` and `:45` IST. The workflow runs five minutes
-after each close so the bar has settled.
+**Measured feed lag is ~2 seconds** (median 2.4s, max 5.8s across six bar
+boundaries — see `measure_feed_lag.py`). The feed is effectively instant, so it
+is not what delays an alert.
+
+**GitHub's scheduler is the real constraint.** Scheduled workflows run on a
+best-effort basis and are queued under load; starts can be many minutes late.
+
+So rather than scheduling *at* bar close and hoping, the workflow fires **~3
+minutes before** each close and the script waits out the remainder precisely:
 
 ```
-cron: '20,50 4-9 * * 1-5'   # UTC → IST 09:50 .. 15:20
-cron: '20 10 * * 1-5'       # UTC → IST 15:50 (final bar)
+cron: '12,42 4-9 * * 1-5'   # UTC → IST :12 and :42
 ```
 
-13 runs per trading day at ~1.8 billed minutes each ≈ **550 min/month** against
-GitHub's 2,000-minute free tier.
+- Job starts around IST `11:12`, sleeps until `11:15:25`, scans → alert ~30s
+  after the bar closes.
+- If GitHub starts the job late, the script detects that the boundary has
+  already passed, skips the wait, and scans immediately.
 
-> GitHub's scheduler is best-effort and can fire several minutes late under load.
-> Because each run reports the most recent *closed* bar, a late run still reports
-> correctly; a severely delayed run may repeat the previous bar's alert. The bar
-> timestamp is printed in every message so duplicates are identifiable.
+12 runs per trading day ≈ **1,300 min/month** against GitHub's 2,000-minute free
+tier. To reduce that, shift the cron to `13,43` for a shorter in-script wait.
+
+> A severely delayed start may repeat the previous bar's alert. Every message
+> carries its bar timestamp and how long ago that bar closed, so duplicates and
+> staleness are always visible.
 
 ---
 

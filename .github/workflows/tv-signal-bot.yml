@@ -1,15 +1,21 @@
 name: NIFTY50 Signal Bot
 
-# NSE 30-min bars close at :15 and :45 IST. We run 5 minutes after each
-# close so the just-closed bar is fully settled before it is evaluated.
-#   IST :20  ->  UTC :50 (previous hour)
-#   IST :50  ->  UTC :20
-# Market 09:15-15:30 IST covers UTC 03:45-10:00.
+# NSE 30-min bars close at :15 and :45 IST.
+#
+# Measured feed lag (bar close -> bar available) is ~2 seconds, so the feed
+# is not the constraint. GitHub's scheduler is: it runs cron on a best-effort
+# basis and can start jobs many minutes late.
+#
+# So we fire ~3 minutes BEFORE each close and let the script wait out the
+# remaining time precisely. A late start is detected and skips the wait.
+#
+#   IST :12  ->  UTC :42 (previous hour)
+#   IST :42  ->  UTC :12
+# UTC 04:12 = IST 09:42 (first close 09:45) .. UTC 09:42 = IST 15:12 (last close 15:15)
 on:
   schedule:
-    - cron: '20,50 4-9 * * 1-5'   # IST 09:50 .. 15:20
-    - cron: '20 10 * * 1-5'       # IST 15:50 (final bar of the session)
-  workflow_dispatch:              # manual "Run workflow" button
+    - cron: '12,42 4-9 * * 1-5'
+  workflow_dispatch:
 
 concurrency:
   group: signal-bot
@@ -18,7 +24,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15   # allows for the in-script wait to the bar boundary
 
     steps:
       - uses: actions/checkout@v4
