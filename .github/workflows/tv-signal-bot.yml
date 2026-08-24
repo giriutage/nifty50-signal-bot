@@ -12,7 +12,15 @@ name: NIFTY50 Signal Bot
 #   IST :12  ->  UTC :42 (previous hour)
 #   IST :42  ->  UTC :12
 # UTC 04:12 = IST 09:42 (first close 09:45) .. UTC 09:42 = IST 15:12 (last close 15:15)
+#
+# GitHub's cron is BEST-EFFORT and was observed skipping scheduled runs
+# entirely on this repo. `repository_dispatch` is honoured immediately, so
+# an external scheduler (cron-job.org) pings it on an exact schedule and
+# is the primary trigger. The cron below is kept only as a free backup for
+# whenever GitHub does decide to honour it.
 on:
+  repository_dispatch:
+    types: [scan]
   schedule:
     - cron: '12,42 4-9 * * 1-5'
   workflow_dispatch:
