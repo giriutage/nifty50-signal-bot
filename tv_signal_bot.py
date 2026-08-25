@@ -293,6 +293,15 @@ def main():
             log(f"  >> {sig['type']:<4} {sym} @ Rs.{sig['price']:,.2f} "
                 f"({sig['confidence']})")
 
+    # Guard against triggers that land outside a live session (pre-open, a
+    # holiday, a stray external ping). Without this, the newest closed bar
+    # belongs to a PREVIOUS session and its signals would be re-alerted as
+    # though they were new.
+    if bar_time is not None and bar_time.date() != datetime.now(IST).date():
+        log(f"Newest closed bar is {bar_time.strftime('%Y-%m-%d %H:%M')} IST, "
+            f"not today - outside a live session. Staying silent.")
+        return
+
     if bar_time is not None:
         log(f"Evaluated bar {bar_time.strftime('%H:%M')} IST "
             f"(closed {staleness/60:.1f} min ago)")

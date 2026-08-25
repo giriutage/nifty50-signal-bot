@@ -25,9 +25,15 @@ on:
     - cron: '12,42 4-9 * * 1-5'
   workflow_dispatch:
 
-concurrency:
-  group: signal-bot
-  cancel-in-progress: false
+# NO concurrency group here, deliberately.
+#
+# GitHub keeps at most ONE pending run per concurrency group: when a third
+# run arrives while one is running and one is queued, the QUEUED one is
+# silently cancelled. Because GitHub starts these runs 5-22 minutes late,
+# they pile up and collide, and that silently dropped roughly every other
+# bar. Overlapping runs are harmless here - each one independently
+# evaluates the most recent closed bar - so letting them all through is
+# strictly better than losing them.
 
 jobs:
   scan:
