@@ -1,5 +1,16 @@
 # NIFTY50 Signal Bot
 
+> **Status: the bot works; the strategy does not.**
+>
+> The delivery pipeline is live and verified — alerts land ~30s after each
+> candle closes. But extensive backtesting (see *Research findings* below)
+> shows these signals carry **no tradeable edge after costs**. Buy-and-hold
+> NIFTY beat the best variant on both return and drawdown.
+>
+> Treat the alerts as an indicator feed, not a trade recommendation. The user
+> paused here in Aug 2026 to look for a different strategy. Do not resume
+> parameter tuning on this one — that ground is covered and exhausted.
+
 BUY/SELL alerts from a **UT Bot + Linear Regression Candles** indicator, sourced
 from TradingView's own data feed and delivered to Telegram via GitHub Actions.
 Runs entirely in the cloud — no local machine, no TradingView Pro, no broker fees.
@@ -154,6 +165,49 @@ Crypto mode exists because a 24/7 market exercises the whole pipeline in
 minutes instead of waiting for a session. At these parameters BTC 1-min
 produces roughly **one signal every 10 minutes**. Trigger it from the Actions
 tab: **Run workflow → mode: crypto**.
+
+## Research findings — settled, do not re-litigate
+
+Tested across futures, options and spot; 30-min, 15-min, 5-min, daily; six
+months to sixteen years; thousands of parameter combinations with
+out-of-sample splits throughout.
+
+| Variant | Result |
+|---|---|
+| NIFTY futures, 30-min swing | +14% CAGR gross, but one lot forces 7.2% risk on ₹1L — untradeable at that size |
+| Options (BS-modelled) | Swing: −97% drawdown. Intraday: looked good but rests on an unverifiable IV assumption |
+| Spot delivery, daily, long-only | 4.2% CAGR / −33% DD vs **buy-and-hold 10.3% / −17%** — loses on both axes |
+| Spot intraday MIS | Every parameter set net negative; costs (63 R) exceed gross edge (44 R) |
+
+**The recurring arithmetic:** per-trade edge of +0.02 to +0.06 R against costs
+of 0.04 to 0.12 R. Too many trades for the edge each carries. Not fixable by
+tuning.
+
+Two secondary findings worth keeping:
+- **LinReg parameters do not affect signals.** In the Pine Script `buy`/`sell`
+  derive solely from `src` and `xATRTrailingStop`. Only Key Value and ATR
+  Period move signals; LinReg only recolours candles (the confidence label).
+- **The colour/line filter subtracts value** at every timeframe tested — it
+  enters later, not better.
+
+## Reusable test harness
+
+Built during the research and worth keeping for whatever strategy comes next.
+Point them at new signal logic rather than rewriting:
+
+| Script | Purpose |
+|---|---|
+| `backtest_index.py` | Single instrument, multi-timeframe |
+| `optimise_index.py` | Grid search with in/out-of-sample split |
+| `optimise_landscape.py` | Parameter heat-map — spots plateaus vs lucky spikes |
+| `robustness_test.py` | Regime testing with realistic gap fills |
+| `intraday_test.py` | Forced-flat-at-close variant |
+| `rupee_simulation.py` | Itemised Indian charges on a real capital base |
+| `spot_swing_backtest.py` | Portfolio sim with capital constraints |
+| `options_backtest.py` | Black-Scholes option pricing |
+
+**Always benchmark against buy-and-hold.** That comparison is what settled
+this, and it was the last thing added rather than the first.
 
 ## Verification
 
