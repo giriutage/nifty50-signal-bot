@@ -1,48 +1,37 @@
 name: NIFTY50 Signal Bot
 
-# NSE 30-min bars close at :15 and :45 IST.
+# ONE job per trading day, held open for the whole session.
 #
-# Measured feed lag (bar close -> bar available) is ~2 seconds, so the feed
-# is not the constraint. GitHub's scheduler is: it runs cron on a best-effort
-# basis and can start jobs many minutes late.
+# GitHub's cron is best-effort: it was observed dropping roughly half the
+# scheduled runs on this repo and starting the rest 5-22 minutes late. So
+# instead of asking it to fire 12 times a day, we ask once and let the job
+# sleep to each bar close itself. A sleep is exact; a queue is not.
 #
-# So we fire ~3 minutes BEFORE each close and let the script wait out the
-# remaining time precisely. A late start is detected and skips the wait.
+# Three start triggers three minutes apart give redundancy against a dropped
+# trigger. The concurrency group ensures only one job is ever live, and the
+# script exits immediately if it finds itself starting as the session ends.
 #
-#   IST :12  ->  UTC :42 (previous hour)
-#   IST :42  ->  UTC :12
-# UTC 04:12 = IST 09:42 (first close 09:45) .. UTC 09:42 = IST 15:12 (last close 15:15)
-#
-# GitHub's cron is BEST-EFFORT and was observed skipping scheduled runs
-# entirely on this repo. `repository_dispatch` is honoured immediately, so
-# an external scheduler (cron-job.org) pings it on an exact schedule and
-# is the primary trigger. The cron below is kept only as a free backup for
-# whenever GitHub does decide to honour it.
+#   UTC 04:06 / 04:09 / 04:12  =  IST 09:36 / 09:39 / 09:42
+#   First bar closes 09:45 IST, last 15:15 IST.
 on:
+  schedule:
+    - cron: '6,9,12 4 * * 1-5'
   repository_dispatch:
     types: [scan]
-  schedule:
-    - cron: '12,42 4-9 * * 1-5'
   workflow_dispatch:
 
-# NO concurrency group here, deliberately.
-#
-# GitHub keeps at most ONE pending run per concurrency group: when a third
-# run arrives while one is running and one is queued, the QUEUED one is
-# silently cancelled. Because GitHub starts these runs 5-22 minutes late,
-# they pile up and collide, and that silently dropped roughly every other
-# bar. Overlapping runs are harmless here - each one independently
-# evaluates the most recent closed bar - so letting them all through is
-# strictly better than losing them.
+concurrency:
+  group: trading-session
+  cancel-in-progress: false
 
 jobs:
-  scan:
+  session:
     runs-on: ubuntu-latest
-    timeout-minutes: 15   # allows for the in-script wait to the bar boundary
+    # Session runs ~09:36 -> 15:16 IST (5h40m). GitHub's hard job ceiling is
+    # 6h; this stops short of it deliberately.
+    timeout-minutes: 350
 
     steps:
-      # v5 / v6 run on Node 24. The older v4 / v5 target the deprecated
-      # Node 20 and are only being force-migrated by the runner for now.
       - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v6
@@ -53,10 +42,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Scan for signals
+      - name: Run trading session
         env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TV_USERNAME: ${{ secrets.TV_USERNAME }}
           TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
-        run: python tv_signal_bot.py
+        run: python -u tv_signal_bot.py

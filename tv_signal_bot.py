@@ -64,14 +64,6 @@ RETRIES = 2
 # Bar boundaries for a 09:15-open exchange fall on :15 and :45.
 BOUNDARY_MINUTES = (15, 45)
 SETTLE_SECONDS = 25      # measured feed lag is ~2s; 25s is a generous margin
-MAX_WAIT_SECONDS = 360   # beyond this we assume a late start and scan at once
-
-# Scans are only meaningful inside a live session. The window is wider than
-# 09:15-15:30 so a trigger that arrives slightly early still waits for the
-# first bar close. Anything outside it exits silently, which lets an external
-# scheduler fire a few harmless extra pings without producing junk alerts.
-SESSION_START = (9, 35)
-SESSION_END = (15, 25)
 
 IST = pytz.timezone('Asia/Kolkata')
 LOCAL_TZ = datetime.now().astimezone().tzinfo   # tvDatafeed stamps bars in local tz
@@ -100,57 +92,42 @@ def log(msg):
 
 # ------------------------------------------------------------ bar timing
 
-def in_session(now=None):
+def session_closes(now=None):
     """
-    True when a scan is worth doing: a weekday, inside the session window.
+    Bar-close times still ahead of us today, as IST datetimes.
 
-    A manual `workflow_dispatch` run always passes, so the bot stays
-    testable outside market hours.
+    NSE 30-min bars close at 09:45, 10:15, ... 15:15 IST. A close that has
+    just passed (within GRACE) is still included so a slightly late start
+    does not skip the bar it was meant to catch.
     """
-    if os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch':
-        return True
-    if os.getenv('FORCE_SCAN') == '1':
-        return True
-
+    GRACE = timedelta(minutes=2)
     now = now or datetime.now(IST)
-    if now.weekday() > 4:          # 5 = Saturday, 6 = Sunday
-        return False
+    if now.weekday() > 4:
+        return []
 
-    start = now.replace(hour=SESSION_START[0], minute=SESSION_START[1],
-                        second=0, microsecond=0)
-    end = now.replace(hour=SESSION_END[0], minute=SESSION_END[1],
-                      second=0, microsecond=0)
-    return start <= now <= end
-
-
-def next_boundary(now):
-    """The next 30-minute bar boundary at or after `now`."""
-    for m in BOUNDARY_MINUTES:
-        if now.minute < m:
-            return now.replace(minute=m, second=0, microsecond=0)
-    return (now + timedelta(hours=1)).replace(
-        minute=BOUNDARY_MINUTES[0], second=0, microsecond=0)
+    out = []
+    for hour in range(9, 16):
+        for minute in BOUNDARY_MINUTES:
+            t = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if t < now.replace(hour=9, minute=45, second=0, microsecond=0):
+                continue                      # before the first close
+            if t > now.replace(hour=15, minute=15, second=0, microsecond=0):
+                continue                      # after the last close
+            if t + GRACE >= now:
+                out.append(t)
+    return sorted(out)
 
 
-def wait_for_bar_close():
-    """
-    Sleep until just past the next bar boundary so the closing bar is
-    settled. Skipped entirely when the boundary is too far away, which
-    means the scheduler started us late and we should scan immediately.
-    """
-    now = datetime.now(IST)
-    target = next_boundary(now) + timedelta(seconds=SETTLE_SECONDS)
-    wait = (target - now).total_seconds()
-
+def sleep_until(target):
+    """Sleep until `target`, reporting the wait. Returns False if already past."""
+    wait = (target - datetime.now(IST)).total_seconds()
     if wait <= 0:
-        return
-    if wait > MAX_WAIT_SECONDS:
-        log(f"Started late (next close is {wait/60:.1f} min away) - "
-            f"scanning the most recent closed bar now.")
-        return
-
-    log(f"Waiting {wait:.0f}s for the {target.strftime('%H:%M')} bar close...")
+        return False
+    log(f"Sleeping {wait/60:.1f} min until the "
+        f"{(target - timedelta(seconds=SETTLE_SECONDS)).strftime('%H:%M')} "
+        f"bar close...")
     time.sleep(wait)
+    return True
 
 
 def last_closed_index(df):
@@ -287,24 +264,14 @@ def build_message(signals, scanned, failed, bar_time, staleness):
     return "\n".join(lines)
 
 
-def main():
-    log("=" * 60)
-    log("NIFTY50 Signal Bot · TradingView feed")
-    log("=" * 60)
+def run_one_scan():
+    """
+    Scan every symbol against its last closed bar and alert once.
 
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        log("FATAL: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set.")
-        sys.exit(1)
-
-    if not in_session():
-        log(f"Outside the session window "
-            f"({SESSION_START[0]:02d}:{SESSION_START[1]:02d}-"
-            f"{SESSION_END[0]:02d}:{SESSION_END[1]:02d} IST, Mon-Fri). "
-            f"Nothing to do.")
-        return
-
-    wait_for_bar_close()
-
+    Opens a fresh TradingView session each time: a websocket held open
+    across a whole trading day is not reliable, and reconnecting costs
+    under a second.
+    """
     tv = connect()
 
     signals, scanned, failed = [], 0, 0
@@ -330,13 +297,11 @@ def main():
             log(f"  >> {sig['type']:<4} {sym} @ Rs.{sig['price']:,.2f} "
                 f"({sig['confidence']})")
 
-    # Guard against triggers that land outside a live session (pre-open, a
-    # holiday, a stray external ping). Without this, the newest closed bar
-    # belongs to a PREVIOUS session and its signals would be re-alerted as
-    # though they were new.
+    # A bar from a previous session means we are not in a live market -
+    # alerting on it would replay yesterday's signals as though new.
     if bar_time is not None and bar_time.date() != datetime.now(IST).date():
         log(f"Newest closed bar is {bar_time.strftime('%Y-%m-%d %H:%M')} IST, "
-            f"not today - outside a live session. Staying silent.")
+            f"not today. Staying silent.")
         return
 
     if bar_time is not None:
@@ -348,10 +313,61 @@ def main():
     if send_telegram(build_message(signals, scanned, failed, bar_time, staleness)):
         log("Telegram sent.")
     else:
-        log("Telegram FAILED.")
+        log("Telegram FAILED - giving up on this bar.")
+
+
+def main():
+    log("=" * 60)
+    log("NIFTY50 Signal Bot · TradingView feed")
+    log("=" * 60)
+
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        log("FATAL: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set.")
         sys.exit(1)
 
-    log("Done.")
+    # A manual run scans once, immediately, so the bot stays testable
+    # outside market hours without occupying a runner all day.
+    if (os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+            or os.getenv('FORCE_SCAN') == '1'):
+        log("Manual run - single scan.")
+        run_one_scan()
+        log("Done.")
+        return
+
+    # Scheduled run: hold the runner for the session and wake at each bar
+    # close. Sleeping here rather than relying on GitHub's scheduler is the
+    # whole point - cron was observed dropping runs and starting 5-22 min
+    # late, while a sleep is exact.
+    closes = session_closes()
+    if not closes:
+        log("No bar closes left today (weekend, holiday, or after 15:15 IST).")
+        return
+
+    # Redundant start triggers mean one job can sit queued behind the live
+    # one and only begin as the session ends. Such a leftover would re-alert
+    # the final bar. A genuine start always has most of the day ahead of it,
+    # so a near-empty schedule identifies the leftover.
+    if len(closes) < 2:
+        log(f"Only {len(closes)} close left - this is a leftover queued run. "
+            f"Exiting rather than duplicating the final bar.")
+        return
+
+    log(f"Session mode: {len(closes)} bar closes ahead "
+        f"({closes[0].strftime('%H:%M')} -> {closes[-1].strftime('%H:%M')} IST)")
+
+    for n, close_t in enumerate(closes, 1):
+        target = close_t + timedelta(seconds=SETTLE_SECONDS)
+        sleep_until(target)
+        log("-" * 60)
+        log(f"[{n}/{len(closes)}] {close_t.strftime('%H:%M')} bar close")
+        try:
+            run_one_scan()
+        except Exception as e:
+            # One bad bar must never end the session.
+            log(f"Scan failed: {type(e).__name__}: {str(e)[:80]}")
+
+    log("=" * 60)
+    log("Session complete.")
 
 
 if __name__ == "__main__":
