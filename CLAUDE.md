@@ -61,25 +61,40 @@ signals against the live chart on NSE:RELIANCE 30-min.
 | **Kite Connect** | Requires a ₹2,000/month subscription for any historical access. |
 | **yfinance** | Works, but OHLC values drift from TradingView. Kept dormant as last resort. |
 
-## Timing design
+## Timing design — one long job, not 12 scheduled runs
 
-Measured feed lag (bar close → bar available) is **~2 seconds** (median 2.4s,
-max 5.8s). The feed is not the constraint.
+Measured feed lag (bar close → bar available) is **~2 seconds**. The feed is
+never the constraint.
 
-**GitHub's scheduler is.** Scheduled workflows are best-effort and get queued
-under load, starting minutes late. So the workflow fires ~3 minutes *before* each
-bar close and `wait_for_bar_close()` sleeps until 25s past the boundary. If the
-job starts late anyway, the wait is skipped and it scans immediately.
+**GitHub's cron is, and this was proven in production — do not go back to it.**
+Running 12 scheduled jobs a day dropped roughly **half** of them (a full session
+alerted only on `:45` bars, never `:15`) and started the survivors **5–22 min
+late**. `concurrency` made it worse: GitHub keeps only one *pending* run per
+group and silently cancels the queued one when a third arrives.
+
+Current design: GitHub starts the job **once per day**; the job holds the runner
+for the session and sleeps to each bar close itself.
 
 ```
-cron: '12,42 4-9 * * 1-5'    # UTC → IST :12 and :42
+cron: '6,9,12 4 * * 1-5'   # UTC → IST 09:36 / 09:39 / 09:42
 ```
 
-NSE 30-min bars close at `:15` and `:45` IST. 12 runs/trading day ≈ 1,300 of the
-2,000 free minutes. Shift cron to `13,43` to trim it. **Making the repo public
-grants unlimited Actions minutes** — nothing sensitive is in the code.
+- Three start triggers cover a dropped trigger; `concurrency: trading-session`
+  keeps one session live. (A concurrency group is correct *here* — we want
+  exactly one long job — unlike the 12-run design where it dropped bars.)
+- `session_closes()` yields the 12 closes 09:45 → 15:15 IST; the loop sleeps to
+  each, then scans ~25s past it.
+- `len(closes) < 2` means this is a leftover queued job starting as the session
+  ends — it exits rather than duplicating the final bar.
+- ~5h40m against GitHub's 6h ceiling (`timeout-minutes: 350`).
 
-Best-case latency: alert lands ~30s after the candle closes.
+**The repo must stay PUBLIC.** A daily 5h40m job needs ~7,300 min/month vs the
+2,000 private allowance. Public repos get unlimited minutes.
+
+Manual `workflow_dispatch` runs do a single immediate scan, keeping the bot
+testable outside market hours.
+
+Latency: alert lands ~30s after the candle closes.
 
 ## Gotchas
 

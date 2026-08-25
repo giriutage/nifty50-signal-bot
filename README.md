@@ -65,30 +65,38 @@ direction (BUY+green / SELL+red), otherwise `MEDIUM`.
 ## Timing
 
 **Measured feed lag is ~2 seconds** (median 2.4s, max 5.8s across six bar
-boundaries — see `measure_feed_lag.py`). The feed is effectively instant, so it
-is not what delays an alert.
+boundaries — see `measure_feed_lag.py`). The feed is effectively instant and is
+never what delays an alert.
 
-**GitHub's scheduler is the real constraint.** Scheduled workflows run on a
-best-effort basis and are queued under load; starts can be many minutes late.
+**GitHub's scheduler was.** Running this as 12 separate scheduled jobs was tried
+and failed in production: cron dropped roughly **half** the runs — a full session
+produced alerts for only the `:45` bars, never the `:15` ones — and started the
+survivors **5–22 minutes late**. Alerts arrived hourly and irregularly.
 
-So rather than scheduling *at* bar close and hoping, the workflow fires **~3
-minutes before** each close and the script waits out the remainder precisely:
+So GitHub is now asked to start the bot **once per day**, and the job holds the
+runner for the session, sleeping to each bar close itself. A `sleep` is exact; a
+queue is not.
 
 ```
-cron: '12,42 4-9 * * 1-5'   # UTC → IST :12 and :42
+cron: '6,9,12 4 * * 1-5'   # UTC → IST 09:36 / 09:39 / 09:42
 ```
 
-- Job starts around IST `11:12`, sleeps until `11:15:25`, scans → alert ~30s
-  after the bar closes.
-- If GitHub starts the job late, the script detects that the boundary has
-  already passed, skips the wait, and scans immediately.
+- Three start triggers three minutes apart, so a dropped trigger costs nothing.
+- `concurrency: trading-session` keeps exactly one session live.
+- The job wakes at 09:45, 10:15 … 15:15 IST — 12 bar closes — scanning ~25s
+  after each, then exits.
+- A leftover queued job that starts as the session ends sees fewer than two
+  closes remaining and exits rather than duplicating the final bar.
 
-12 runs per trading day ≈ **1,300 min/month** against GitHub's 2,000-minute free
-tier. To reduce that, shift the cron to `13,43` for a shorter in-script wait.
+Session length is ~5h40m against GitHub's 6h job ceiling (`timeout-minutes: 350`).
 
-> A severely delayed start may repeat the previous bar's alert. Every message
-> carries its bar timestamp and how long ago that bar closed, so duplicates and
-> staleness are always visible.
+> **This requires a public repository.** A daily ~5h40m job needs ~7,300
+> minutes/month, far beyond the 2,000 allowed on private repos. Public repos get
+> unlimited Actions minutes, and nothing sensitive lives in the code — the
+> Telegram token is a repository Secret and `.env` is gitignored.
+
+Manual `workflow_dispatch` runs perform a single immediate scan instead of
+occupying a runner all day, so the bot stays testable outside market hours.
 
 ---
 
