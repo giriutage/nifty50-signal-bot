@@ -334,7 +334,7 @@ def run_one_scan():
         if sig:
             sig['symbol'] = sym
             signals.append(sig)
-            log(f"  >> {sig['type']:<4} {sym} @ Rs.{sig['price']:,.2f} "
+            log(f"  >> {sig['type']:<4} {sym} @ {CURRENCY}{sig['price']:,.2f} "
                 f"({sig['confidence']})")
 
     # A bar from a previous session means we are not in a live market -
