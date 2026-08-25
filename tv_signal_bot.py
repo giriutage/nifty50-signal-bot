@@ -66,6 +66,13 @@ BOUNDARY_MINUTES = (15, 45)
 SETTLE_SECONDS = 25      # measured feed lag is ~2s; 25s is a generous margin
 MAX_WAIT_SECONDS = 360   # beyond this we assume a late start and scan at once
 
+# Scans are only meaningful inside a live session. The window is wider than
+# 09:15-15:30 so a trigger that arrives slightly early still waits for the
+# first bar close. Anything outside it exits silently, which lets an external
+# scheduler fire a few harmless extra pings without producing junk alerts.
+SESSION_START = (9, 35)
+SESSION_END = (15, 25)
+
 IST = pytz.timezone('Asia/Kolkata')
 LOCAL_TZ = datetime.now().astimezone().tzinfo   # tvDatafeed stamps bars in local tz
 
@@ -92,6 +99,29 @@ def log(msg):
 
 
 # ------------------------------------------------------------ bar timing
+
+def in_session(now=None):
+    """
+    True when a scan is worth doing: a weekday, inside the session window.
+
+    A manual `workflow_dispatch` run always passes, so the bot stays
+    testable outside market hours.
+    """
+    if os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch':
+        return True
+    if os.getenv('FORCE_SCAN') == '1':
+        return True
+
+    now = now or datetime.now(IST)
+    if now.weekday() > 4:          # 5 = Saturday, 6 = Sunday
+        return False
+
+    start = now.replace(hour=SESSION_START[0], minute=SESSION_START[1],
+                        second=0, microsecond=0)
+    end = now.replace(hour=SESSION_END[0], minute=SESSION_END[1],
+                      second=0, microsecond=0)
+    return start <= now <= end
+
 
 def next_boundary(now):
     """The next 30-minute bar boundary at or after `now`."""
@@ -265,6 +295,13 @@ def main():
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         log("FATAL: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set.")
         sys.exit(1)
+
+    if not in_session():
+        log(f"Outside the session window "
+            f"({SESSION_START[0]:02d}:{SESSION_START[1]:02d}-"
+            f"{SESSION_END[0]:02d}:{SESSION_END[1]:02d} IST, Mon-Fri). "
+            f"Nothing to do.")
+        return
 
     wait_for_bar_close()
 
