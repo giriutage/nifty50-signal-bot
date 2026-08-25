@@ -67,7 +67,9 @@ def trade_intraday(o, h, lo, c, buy, sell, ts, last_of_day, lo_i, hi_i, rr=RR):
                 break
         if r is None:
             break
-        out.append({'R': r, 'how': how, 'bars': ex - i})
+        out.append({'R': r, 'how': how, 'bars': ex - i,
+                    'i': i + 1, 'j': ex,
+                    'dir': 'BUY' if buy[i] else 'SELL'})
         i = ex + 1
     return out
 

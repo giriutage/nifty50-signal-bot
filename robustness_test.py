@@ -63,7 +63,8 @@ def trade(o, h, lo, c, buy, sell, ts, lo_i, hi_i, rr=RR):
                 break
         if r is None:
             break
-        out.append({'R': r, 'i': i + 1, 'j': ex})
+        out.append({'R': r, 'i': i + 1, 'j': ex,
+                    'dir': 'BUY' if buy[i] else 'SELL'})
         i = ex + 1
     return out
 
