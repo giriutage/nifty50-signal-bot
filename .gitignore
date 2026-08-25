@@ -57,3 +57,4 @@ data/
 
 # Backtest data cache (regenerates)
 backtest_cache.pkl
+spot_daily_cache.pkl
