@@ -54,3 +54,6 @@ logs/
 # Stale artifacts from abandoned deployment paths
 cloud-function/
 data/
+
+# Backtest data cache (regenerates)
+backtest_cache.pkl
