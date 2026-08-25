@@ -29,8 +29,17 @@ GitHub Actions (cron) → tvDatafeed (TradingView websocket)
 ## Invariants — do not break these
 
 **1. Indicator parameters must mirror the Pine Script exactly.**
-`key_value=2`, `atr_period=1`, `signal_length=6`, `use_sma=True`, `linreg_length=8`.
+`key_value=2`, `atr_period=1`, `signal_length=7`, `use_sma=True`, `linreg_length=11`.
 Changing one here without changing it on the chart desynchronises every alert.
+
+> Note which parameters actually move signals. In the Pine Script,
+> `buy`/`sell` derive solely from `src` and `xATRTrailingStop` — that is,
+> **Key Value and ATR Period alone**. The LinReg values feed `plotcandle` and
+> the signal line only. So `signal_length` / `linreg_length` change nothing
+> about *which* signals fire; they only recolour the candles, which the bot
+> reads as the HIGH/MEDIUM confidence label. Verified empirically: 6/8 and
+> 7/11 both produced 49 BUY + 49 SELL over the same 1,000 bars, differing
+> only in confidence split (93% vs 84% HIGH).
 
 **2. Only ever evaluate a CLOSED bar.** The forming bar's close keeps moving, so
 evaluating it causes repainting — alerts that fire then vanish. The user
@@ -131,10 +140,26 @@ entitlement, not on code. Every Telegram message prints `bar closed X min ago`:
 ~0.5 min means real-time; ~15 min means delayed, and the fix is adding
 `TV_USERNAME` / `TV_PASSWORD`. Check during a live session (09:15–15:30 IST).
 
+## Modes
+
+`BOT_MODE` selects the profile (default `nse`):
+
+| | `nse` (production) | `crypto` (verification) |
+|---|---|---|
+| Market | NSE, 39 NIFTY50 symbols | BINANCE, `BTCUSDT` |
+| Bars | 30-min, session-bound | 1-min, 24/7, time-boxed by `RUN_MINUTES` |
+| Messages | every bar, incl. "no signals" | only on a real signal |
+
+Crypto mode exists because a 24/7 market exercises the whole pipeline in
+minutes instead of waiting for a session. At these parameters BTC 1-min
+produces roughly **one signal every 10 minutes**. Trigger it from the Actions
+tab: **Run workflow → mode: crypto**.
+
 ## Verification
 
 ```bash
-python tv_signal_bot.py            # full run, sends to Telegram
+python tv_signal_bot.py             # full run, sends to Telegram
+BOT_MODE=crypto RUN_MINUTES=30 python tv_signal_bot.py   # fast live test
 python verify_tvdatafeed_quality.py # print signals to compare against the chart
 python measure_feed_lag.py          # re-measure feed lag
 ```

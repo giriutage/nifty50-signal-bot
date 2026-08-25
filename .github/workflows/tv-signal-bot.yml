@@ -19,6 +19,15 @@ on:
   repository_dispatch:
     types: [scan]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'nse = single production scan · crypto = BTC 1-min live test'
+        type: choice
+        options: [nse, crypto]
+        default: nse
+      run_minutes:
+        description: 'crypto mode only: how long to watch, in minutes'
+        default: '60'
 
 concurrency:
   group: trading-session
@@ -45,6 +54,8 @@ jobs:
       - name: Run trading session
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BOT_MODE: ${{ github.event.inputs.mode || 'nse' }}
+          RUN_MINUTES: ${{ github.event.inputs.run_minutes || '60' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TV_USERNAME: ${{ secrets.TV_USERNAME }}

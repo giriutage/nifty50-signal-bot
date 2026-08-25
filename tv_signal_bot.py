@@ -55,27 +55,24 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 TV_USERNAME = os.getenv('TV_USERNAME')
 TV_PASSWORD = os.getenv('TV_PASSWORD')
 
-EXCHANGE = 'NSE'
-INTERVAL = Interval.in_30_minute
-INTERVAL_MINUTES = 30
 N_BARS = 300
 RETRIES = 2
-
-# Bar boundaries for a 09:15-open exchange fall on :15 and :45.
-BOUNDARY_MINUTES = (15, 45)
-SETTLE_SECONDS = 25      # measured feed lag is ~2s; 25s is a generous margin
 
 IST = pytz.timezone('Asia/Kolkata')
 LOCAL_TZ = datetime.now().astimezone().tzinfo   # tvDatafeed stamps bars in local tz
 
-# Indicator parameters - must mirror the Pine Script exactly
+# --- Indicator parameters -------------------------------------------------
+# These MUST mirror the Pine Script on the chart exactly. Changing one here
+# without changing it there desynchronises every alert.
+#   Signal Smoothing 7 · Simple MA on · Lin Reg on
+#   Linear Regression Length 11 · Key Value 2 · ATR Period 1
 UT_KEY_VALUE = 2
 UT_ATR_PERIOD = 1
-LR_SIGNAL_LENGTH = 6
+LR_SIGNAL_LENGTH = 7
 LR_USE_SMA = True
-LR_LINREG_LENGTH = 8
+LR_LINREG_LENGTH = 11
 
-SYMBOLS = [
+NIFTY50 = [
     'RELIANCE', 'TCS', 'INFY', 'WIPRO', 'SBIN', 'MARUTI', 'BAJAJ_AUTO',
     'LT', 'AXISBANK', 'BHARTIARTL', 'ITC', 'SUNPHARMA', 'ASIANPAINT',
     'HCLTECH', 'TECHM', 'ULTRACEMCO', 'JSWSTEEL', 'ICICIBANK', 'POWERGRID',
@@ -84,6 +81,39 @@ SYMBOLS = [
     'HEROMOTOCO', 'SIEMENS', 'SHRIRAMFIN', 'TATACONSUM', 'TATASTEEL',
     'EICHERMOT', 'HDFCBANK', 'KOTAKBANK',
 ]
+
+# --- Mode -----------------------------------------------------------------
+# 'nse'    production: NIFTY50, 30-min bars, bound to the trading session.
+# 'crypto' verification: BTCUSDT 1-min on a 24/7 market, so the whole
+#          pipeline can be exercised in minutes rather than waiting for a
+#          session. Stays quiet unless there is a real signal - at one bar a
+#          minute, "no signals" messages would be pure spam.
+MODE = os.getenv('BOT_MODE', 'nse').strip().lower()
+
+if MODE == 'crypto':
+    EXCHANGE = 'BINANCE'
+    SYMBOLS = [s.strip() for s in
+               os.getenv('TEST_SYMBOLS', 'BTCUSDT').split(',') if s.strip()]
+    INTERVAL = Interval.in_1_minute
+    INTERVAL_MINUTES = 1
+    SETTLE_SECONDS = 8
+    SESSION_BOUND = False       # 24/7 market: no session window, no date guard
+    QUIET = True                # message only when there is an actual signal
+    CURRENCY = '$'
+    RUN_MINUTES = int(os.getenv('RUN_MINUTES', '45'))
+else:
+    EXCHANGE = 'NSE'
+    SYMBOLS = NIFTY50
+    INTERVAL = Interval.in_30_minute
+    INTERVAL_MINUTES = 30
+    SETTLE_SECONDS = 25         # measured feed lag is ~2s; 25s is generous
+    SESSION_BOUND = True
+    QUIET = False
+    CURRENCY = '₹'
+    RUN_MINUTES = None
+
+# NSE 30-min bars close at :15 and :45 IST.
+BOUNDARY_MINUTES = (15, 45)
 
 
 def log(msg):
@@ -94,14 +124,22 @@ def log(msg):
 
 def session_closes(now=None):
     """
-    Bar-close times still ahead of us today, as IST datetimes.
+    Bar-close times still ahead of us, as IST datetimes.
 
-    NSE 30-min bars close at 09:45, 10:15, ... 15:15 IST. A close that has
-    just passed (within GRACE) is still included so a slightly late start
-    does not skip the bar it was meant to catch.
+    NSE: the 12 closes 09:45, 10:15 ... 15:15 today. A close that has just
+    passed (within GRACE) is still included so a slightly late start does
+    not skip the bar it was meant to catch.
+
+    Crypto: the next RUN_MINUTES one-minute boundaries - a 24/7 market has
+    no session, so the run is simply time-boxed.
     """
-    GRACE = timedelta(minutes=2)
     now = now or datetime.now(IST)
+
+    if not SESSION_BOUND:
+        base = now.replace(second=0, microsecond=0)
+        return [base + timedelta(minutes=i) for i in range(1, RUN_MINUTES + 1)]
+
+    GRACE = timedelta(minutes=2)
     if now.weekday() > 4:
         return []
 
@@ -245,20 +283,22 @@ def send_telegram(text, attempts=4):
 def build_message(signals, scanned, failed, bar_time, staleness):
     now_ist = datetime.now(IST)
     bar = bar_time.strftime('%H:%M') if bar_time is not None else '--:--'
-    age = f"{staleness/60:.1f} min" if staleness is not None else "?"
+    age = f"{staleness:.0f}s" if staleness is not None and staleness < 120 \
+        else (f"{staleness/60:.1f} min" if staleness is not None else "?")
+    title = "BTC TEST" if MODE == 'crypto' else "NIFTY50"
 
-    footer = (f"<i>{now_ist.strftime('%d %b %H:%M')} IST · "
+    footer = (f"<i>{now_ist.strftime('%d %b %H:%M:%S')} IST · "
               f"{scanned} scanned · bar closed {age} ago"
               + (f" · {failed} unavailable" if failed else "") + "</i>")
 
     if not signals:
         return f"\U0001F4A4 <b>No signals</b> · {bar} bar\n{footer}"
 
-    lines = [f"<b>\U0001F4CA NIFTY50 · {bar} bar</b>", ""]
+    lines = [f"<b>\U0001F4CA {title} · {bar} bar</b>", ""]
     for s in signals:
         icon = "\U0001F7E2" if s['type'] == 'BUY' else "\U0001F534"
         lines.append(f"{icon} <b>{s['symbol']}</b> — {s['type']}")
-        lines.append(f"    ₹{s['price']:,.2f} · {s['confidence']} confidence")
+        lines.append(f"    {CURRENCY}{s['price']:,.2f} · {s['confidence']} confidence")
         lines.append("")
     lines.append(footer)
     return "\n".join(lines)
@@ -298,10 +338,18 @@ def run_one_scan():
                 f"({sig['confidence']})")
 
     # A bar from a previous session means we are not in a live market -
-    # alerting on it would replay yesterday's signals as though new.
-    if bar_time is not None and bar_time.date() != datetime.now(IST).date():
+    # alerting on it would replay yesterday's signals as though new. Only
+    # meaningful for a session-bound market; a 24/7 one legitimately crosses
+    # midnight.
+    if (SESSION_BOUND and bar_time is not None
+            and bar_time.date() != datetime.now(IST).date()):
         log(f"Newest closed bar is {bar_time.strftime('%Y-%m-%d %H:%M')} IST, "
             f"not today. Staying silent.")
+        return
+
+    # In quiet mode an uneventful bar produces no message at all.
+    if QUIET and not signals:
+        log(f"  no signal on the {bar_time.strftime('%H:%M') if bar_time else '--:--'} bar")
         return
 
     if bar_time is not None:
@@ -325,10 +373,16 @@ def main():
         log("FATAL: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set.")
         sys.exit(1)
 
-    # A manual run scans once, immediately, so the bot stays testable
-    # outside market hours without occupying a runner all day.
-    if (os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch'
-            or os.getenv('FORCE_SCAN') == '1'):
+    log(f"Mode: {MODE} · {EXCHANGE} · {INTERVAL_MINUTES}-min bars · "
+        f"{len(SYMBOLS)} symbol(s)")
+    log(f"Params: key={UT_KEY_VALUE} atr={UT_ATR_PERIOD} "
+        f"signal={LR_SIGNAL_LENGTH} sma={LR_USE_SMA} linreg={LR_LINREG_LENGTH}")
+
+    # A manual NSE run scans once, immediately, so the bot stays testable
+    # outside market hours without occupying a runner all day. Crypto mode is
+    # itself a test, so it always runs its loop.
+    if SESSION_BOUND and (os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+                          or os.getenv('FORCE_SCAN') == '1'):
         log("Manual run - single scan.")
         run_one_scan()
         log("Done.")
@@ -347,7 +401,7 @@ def main():
     # one and only begin as the session ends. Such a leftover would re-alert
     # the final bar. A genuine start always has most of the day ahead of it,
     # so a near-empty schedule identifies the leftover.
-    if len(closes) < 2:
+    if SESSION_BOUND and len(closes) < 2:
         log(f"Only {len(closes)} close left - this is a leftover queued run. "
             f"Exiting rather than duplicating the final bar.")
         return
