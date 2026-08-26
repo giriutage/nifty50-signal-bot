@@ -1,0 +1,51 @@
+name: Session B (afternoon)
+
+# Covers the bar closes 12:45 -> 15:15 IST.
+#
+# Triggers fire from 10:30 IST, over two hours before the first close, for the
+# same reason as the morning phase: GitHub's cron is best-effort and a large
+# head start is what makes a late start harmless.
+#
+# This half runs at most 10:30 -> 15:16 = 4h46m, comfortably under GitHub's
+# 6-hour job ceiling.
+#
+# The close ranges of the two phases do not overlap (A ends 12:15, B starts
+# 12:45), so even if both are live at once neither can duplicate the other's
+# alerts.
+#
+#   UTC 05:00, 05:30 ... 07:30  =  IST 10:30, 11:00 ... 13:00
+on:
+  schedule:
+    - cron: '0,30 5-7 * * 1-5'
+
+# Its own group, so this is never queued behind a still-running morning phase.
+concurrency:
+  group: session-afternoon
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run afternoon session
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PHASE_FIRST_CLOSE: '12:45'
+          PHASE_LAST_CLOSE: '15:15'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+        run: python -u tv_signal_bot.py

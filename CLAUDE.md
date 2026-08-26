@@ -32,7 +32,9 @@ GitHub Actions (cron) → tvDatafeed (TradingView websocket)
 |---|---|
 | `tv_signal_bot.py` | The bot: fetch → evaluate → alert |
 | `tradingview_indicators.py` | `ut_bot_alert()`, `linear_reg_candles()` |
-| `.github/workflows/tv-signal-bot.yml` | Schedule + secrets wiring |
+| `.github/workflows/session-morning.yml` | Phase A schedule (09:45–12:15 IST) |
+| `.github/workflows/session-afternoon.yml` | Phase B schedule (12:45–15:15 IST) |
+| `.github/workflows/manual.yml` | `workflow_dispatch` + `repository_dispatch`, no phase limit |
 | `verify_tvdatafeed_quality.py` | Re-check data parity against the chart |
 | `measure_feed_lag.py` | Measure bar-close → availability lag |
 | `cloud_nifty_bot.py` | **Dormant** yfinance fallback ("Option Z"). Not wired to any workflow. |
@@ -92,21 +94,32 @@ alerted only on `:45` bars, never `:15`) and started the survivors **5–22 min
 late**. `concurrency` made it worse: GitHub keeps only one *pending* run per
 group and silently cancels the queued one when a third arrives.
 
-Current design: GitHub starts the job **once per day**; the job holds the runner
-for the session and sleeps to each bar close itself.
+Current design: the job holds the runner and sleeps to each bar close itself.
+The day is split into **two phases**, each started well ahead of the bars it
+covers.
 
-```
-cron: '6,9,12 4 * * 1-5'   # UTC → IST 09:36 / 09:39 / 09:42
-```
+**Why two phases, not one job.** Starting 09:36 for a 09:45 first close left
+only 9 minutes of slack. On 2026-08-26 GitHub started 43 min late and the 09:45
+and 10:15 bars were lost. The cure is a long head start — but one job covering
+07:30 → 15:16 IST is 7h46m and would breach GitHub's hard **6-hour job
+ceiling**. Splitting the day buys each half ~2h of buffer *and* keeps it at
+4h46m.
 
-- Three start triggers cover a dropped trigger; `concurrency: trading-session`
-  keeps one session live. (A concurrency group is correct *here* — we want
-  exactly one long job — unlike the 12-run design where it dropped bars.)
-- `session_closes()` yields the 12 closes 09:45 → 15:15 IST; the loop sleeps to
-  each, then scans ~25s past it.
-- `len(closes) < 2` means this is a leftover queued job starting as the session
-  ends — it exits rather than duplicating the final bar.
-- ~5h40m against GitHub's 6h ceiling (`timeout-minutes: 350`).
+| | Phase A | Phase B |
+|---|---|---|
+| Closes | 09:45 → 12:15 IST | 12:45 → 15:15 IST |
+| Cron (UTC) | `0,30 2-4 * * 1-5` | `0,30 5-7 * * 1-5` |
+| Triggers (IST) | 07:30 … 10:00 | 10:30 … 13:00 |
+| Concurrency | `session-morning` | `session-afternoon` |
+
+- **Separate concurrency groups** so B is never queued behind a running A. The
+  close ranges are disjoint, so concurrent phases cannot double-alert.
+- `PHASE_FIRST_CLOSE` / `PHASE_LAST_CLOSE` bound `session_closes()`; unset means
+  the full day, which is what `manual.yml` uses.
+- `len(closes) < 2` on a *scheduled* run means a leftover queued job starting as
+  the phase ends — it exits rather than duplicating the final bar. A *manual*
+  run instead takes over the rest of the day, which is the recovery path.
+- Losing a whole phase's triggers costs that half only, never the whole day.
 
 **The repo must stay PUBLIC.** A daily 5h40m job needs ~7,300 min/month vs the
 2,000 private allowance. Public repos get unlimited minutes.

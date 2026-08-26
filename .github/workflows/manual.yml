@@ -1,0 +1,56 @@
+name: Manual / dispatch
+
+# On-demand runs. No phase limits, so this covers whatever remains of the
+# trading day - which makes it the recovery path if both scheduled phases are
+# ever dropped.
+#
+# Two entry points:
+#   workflow_dispatch    the Actions tab button (also runs the BTC crypto test)
+#   repository_dispatch  an external scheduler POSTing {"event_type":"scan"} to
+#                        /repos/OWNER/REPO/dispatches. GitHub honours these
+#                        immediately rather than best-effort, so this stays
+#                        available if punctual starts are ever wanted.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'nse = production scan · crypto = BTC 1-min live test'
+        type: choice
+        options: [nse, crypto]
+        default: nse
+      run_minutes:
+        description: 'crypto mode only: how long to watch, in minutes'
+        default: '60'
+  repository_dispatch:
+    types: [scan]
+
+concurrency:
+  group: session-manual
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          BOT_MODE: ${{ github.event.inputs.mode || 'nse' }}
+          RUN_MINUTES: ${{ github.event.inputs.run_minutes || '60' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+        run: python -u tv_signal_bot.py

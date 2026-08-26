@@ -1,0 +1,50 @@
+name: Session A (morning)
+
+# Covers the bar closes 09:45 -> 12:15 IST.
+#
+# Triggers fire from 07:30 IST, over two hours before the first close. That
+# head start is the whole point: on 2026-08-26 GitHub ran the trigger 43
+# minutes late and, because the job began only 9 minutes before the first
+# close, the 09:45 and 10:15 alerts were lost. With this buffer the same delay
+# costs nothing.
+#
+# A single job covering 07:30 -> 15:16 IST would be 7h46m and exceed GitHub's
+# hard 6-hour ceiling, which is why the day is split. This half runs at most
+# 07:30 -> 12:16 = 4h46m.
+#
+#   UTC 02:00, 02:30 ... 04:30  =  IST 07:30, 08:00 ... 10:00
+on:
+  schedule:
+    - cron: '0,30 2-4 * * 1-5'
+
+# Its own group, so the afternoon phase is never queued behind this one.
+concurrency:
+  group: session-morning
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run morning session
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PHASE_FIRST_CLOSE: '09:45'
+          PHASE_LAST_CLOSE: '12:15'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+        run: python -u tv_signal_bot.py

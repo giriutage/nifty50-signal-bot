@@ -116,6 +116,29 @@ else:
 BOUNDARY_MINUTES = (15, 45)
 
 
+def _hhmm(value, default):
+    """Parse an 'HH:MM' env value into (hour, minute)."""
+    try:
+        h, m = (value or default).strip().split(':')
+        return int(h), int(m)
+    except Exception:
+        h, m = default.split(':')
+        return int(h), int(m)
+
+
+# The trading day can be split into phases, each run by its own workflow.
+# GitHub's cron is best-effort - on 2026-08-26 it started 43 minutes late and
+# two bars were lost, because the job began only 9 minutes before the first
+# close. The cure is a long head start, but a single job covering 07:30 ->
+# 15:16 would exceed GitHub's hard 6-hour ceiling. Splitting the day lets each
+# half start ~2 hours early AND stay well under that limit.
+#
+# Defaults cover the whole session, so an unset environment behaves exactly as
+# before (manual runs, repository_dispatch, local testing).
+PHASE_FIRST_CLOSE = _hhmm(os.getenv('PHASE_FIRST_CLOSE'), '09:45')
+PHASE_LAST_CLOSE = _hhmm(os.getenv('PHASE_LAST_CLOSE'), '15:15')
+
+
 def log(msg):
     print(f"[{datetime.now(IST).strftime('%H:%M:%S')} IST] {msg}", flush=True)
 
@@ -143,14 +166,19 @@ def session_closes(now=None):
     if now.weekday() > 4:
         return []
 
+    first = now.replace(hour=PHASE_FIRST_CLOSE[0], minute=PHASE_FIRST_CLOSE[1],
+                        second=0, microsecond=0)
+    last = now.replace(hour=PHASE_LAST_CLOSE[0], minute=PHASE_LAST_CLOSE[1],
+                       second=0, microsecond=0)
+
     out = []
     for hour in range(9, 16):
         for minute in BOUNDARY_MINUTES:
             t = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if t < now.replace(hour=9, minute=45, second=0, microsecond=0):
-                continue                      # before the first close
-            if t > now.replace(hour=15, minute=15, second=0, microsecond=0):
-                continue                      # after the last close
+            if t < first:
+                continue                      # before this phase's first close
+            if t > last:
+                continue                      # after this phase's last close
             if t + GRACE >= now:
                 out.append(t)
     return sorted(out)
@@ -375,6 +403,10 @@ def main():
 
     log(f"Mode: {MODE} · {EXCHANGE} · {INTERVAL_MINUTES}-min bars · "
         f"{len(SYMBOLS)} symbol(s)")
+    if SESSION_BOUND:
+        log(f"Phase window: {PHASE_FIRST_CLOSE[0]:02d}:{PHASE_FIRST_CLOSE[1]:02d}"
+            f" -> {PHASE_LAST_CLOSE[0]:02d}:{PHASE_LAST_CLOSE[1]:02d} IST "
+            f"(bar closes covered by this run)")
     log(f"Params: key={UT_KEY_VALUE} atr={UT_ATR_PERIOD} "
         f"signal={LR_SIGNAL_LENGTH} sma={LR_USE_SMA} linreg={LR_LINREG_LENGTH}")
 
