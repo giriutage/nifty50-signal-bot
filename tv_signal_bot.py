@@ -378,12 +378,11 @@ def main():
     log(f"Params: key={UT_KEY_VALUE} atr={UT_ATR_PERIOD} "
         f"signal={LR_SIGNAL_LENGTH} sma={LR_USE_SMA} linreg={LR_LINREG_LENGTH}")
 
-    # A manual NSE run scans once, immediately, so the bot stays testable
-    # outside market hours without occupying a runner all day. Crypto mode is
-    # itself a test, so it always runs its loop.
-    if SESSION_BOUND and (os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch'
-                          or os.getenv('FORCE_SCAN') == '1'):
-        log("Manual run - single scan.")
+    manual = os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+
+    # FORCE_SCAN is the local testing escape hatch: always one scan, now.
+    if SESSION_BOUND and os.getenv('FORCE_SCAN') == '1':
+        log("FORCE_SCAN - single scan.")
         run_one_scan()
         log("Done.")
         return
@@ -393,6 +392,17 @@ def main():
     # whole point - cron was observed dropping runs and starting 5-22 min
     # late, while a sleep is exact.
     closes = session_closes()
+
+    # A manual run with too little of the session left is a test, not a
+    # recovery - scan once and finish rather than holding a runner idle.
+    # With most of the day ahead it IS a recovery: GitHub dropped the
+    # morning trigger and this is how the session gets restarted by hand.
+    if SESSION_BOUND and manual and len(closes) < 2:
+        log("Manual run outside the session - single scan.")
+        run_one_scan()
+        log("Done.")
+        return
+
     if not closes:
         log("No bar closes left today (weekend, holiday, or after 15:15 IST).")
         return
@@ -401,10 +411,14 @@ def main():
     # one and only begin as the session ends. Such a leftover would re-alert
     # the final bar. A genuine start always has most of the day ahead of it,
     # so a near-empty schedule identifies the leftover.
-    if SESSION_BOUND and len(closes) < 2:
+    if SESSION_BOUND and not manual and len(closes) < 2:
         log(f"Only {len(closes)} close left - this is a leftover queued run. "
             f"Exiting rather than duplicating the final bar.")
         return
+
+    if manual:
+        log("Manual run during the session - taking over for the rest of "
+            "the day.")
 
     log(f"Session mode: {len(closes)} bar closes ahead "
         f"({closes[0].strftime('%H:%M')} -> {closes[-1].strftime('%H:%M')} IST)")
