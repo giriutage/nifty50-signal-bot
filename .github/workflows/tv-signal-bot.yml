@@ -7,15 +7,23 @@ name: NIFTY50 Signal Bot
 # instead of asking it to fire 12 times a day, we ask once and let the job
 # sleep to each bar close itself. A sleep is exact; a queue is not.
 #
-# Three start triggers three minutes apart give redundancy against a dropped
-# trigger. The concurrency group ensures only one job is ever live, and the
-# script exits immediately if it finds itself starting as the session ends.
+# Start triggers are spread across the WHOLE session, every 30 minutes.
 #
-#   UTC 04:06 / 04:09 / 04:12  =  IST 09:36 / 09:39 / 09:42
+# Clustering them (09:36/09:39/09:42) failed on 2026-08-26: GitHub ran the
+# trigger 43 minutes late, so all three were late together and the 09:45 and
+# 10:15 bars were lost. Spreading them means a dropped or delayed trigger
+# only costs the bars before the next one lands, instead of the whole day.
+#
+# The concurrency group keeps exactly one session live: while a job runs,
+# later triggers queue, and the one still pending when the session ends finds
+# no bar closes left and exits in seconds. Public repo, so the extra queued
+# runs cost nothing.
+#
+#   UTC 04:06, 04:36 ... 09:36  =  IST 09:36, 10:06 ... 15:06
 #   First bar closes 09:45 IST, last 15:15 IST.
 on:
   schedule:
-    - cron: '6,9,12 4 * * 1-5'
+    - cron: '6,36 4-9 * * 1-5'
   repository_dispatch:
     types: [scan]
   workflow_dispatch:
