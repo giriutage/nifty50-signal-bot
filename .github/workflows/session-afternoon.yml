@@ -13,10 +13,13 @@ name: Session B (afternoon)
 # 12:45), so even if both are live at once neither can duplicate the other's
 # alerts.
 #
-#   UTC 05:00, 05:30 ... 07:30  =  IST 10:30, 11:00 ... 13:00
+# Odd, off-peak minutes for the same reason as the morning phase: :00/:30 runs
+# on 2026-08-27 and 08-28 were delayed 8-10 hours and woke after the close.
+#
+#   UTC 05:07 ... 07:53  =  IST 10:37 ... 13:23
 on:
   schedule:
-    - cron: '0,30 5-7 * * 1-5'
+    - cron: '7,23,39,53 5-7 * * 1-5'
 
 # Its own group, so this is never queued behind a still-running morning phase.
 concurrency:

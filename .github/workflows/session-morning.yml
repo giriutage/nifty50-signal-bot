@@ -12,10 +12,18 @@ name: Session A (morning)
 # hard 6-hour ceiling, which is why the day is split. This half runs at most
 # 07:30 -> 12:16 = 4h46m.
 #
-#   UTC 02:00, 02:30 ... 04:30  =  IST 07:30, 08:00 ... 10:00
+# MINUTE CHOICE MATTERS. Running on :00/:30 on 2026-08-27 and 08-28 produced
+# 8-10 HOUR delays - the job woke after the market had closed and correctly did
+# nothing, so no alerts arrived at all. Those are the most congested minutes on
+# GitHub's scheduler; its own documentation warns of delays under high load.
+# The earlier :06/:36 schedule saw only 1-22 minute delays. These are
+# deliberately odd, off-peak minutes, and there are many of them so a skipped
+# trigger is not fatal.
+#
+#   UTC 02:07 ... 04:53  =  IST 07:37 ... 10:23
 on:
   schedule:
-    - cron: '0,30 2-4 * * 1-5'
+    - cron: '7,23,39,53 2-4 * * 1-5'
 
 # Its own group, so the afternoon phase is never queued behind this one.
 concurrency:

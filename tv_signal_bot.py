@@ -436,7 +436,23 @@ def main():
         return
 
     if not closes:
-        log("No bar closes left today (weekend, holiday, or after 15:15 IST).")
+        now = datetime.now(IST)
+        log(f"No bar closes left in this phase "
+            f"(now {now.strftime('%a %H:%M')} IST).")
+        # Silence is the worst outcome: on 2026-08-27/28 GitHub started these
+        # jobs 8-10 hours late, they woke after the close, exited quietly, and
+        # the user spent two days unsure whether the bot was broken. If we were
+        # started too late to be useful on a trading day, say so.
+        if SESSION_BOUND and not manual and now.weekday() <= 4:
+            phase = (f"{PHASE_FIRST_CLOSE[0]:02d}:{PHASE_FIRST_CLOSE[1]:02d}"
+                     f"-{PHASE_LAST_CLOSE[0]:02d}:{PHASE_LAST_CLOSE[1]:02d}")
+            send_telegram(
+                f"⚠️ <b>Missed session</b>\n"
+                f"Woke at {now.strftime('%H:%M')} IST, after this phase's "
+                f"window ({phase}).\n"
+                f"<i>GitHub started the scheduled job too late - no bars were "
+                f"available to scan. The bot is alive; the trigger was "
+                f"delayed.</i>")
         return
 
     # Redundant start triggers mean one job can sit queued behind the live
