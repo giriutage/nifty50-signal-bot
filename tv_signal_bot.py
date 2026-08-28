@@ -94,8 +94,11 @@ if MODE == 'crypto':
     EXCHANGE = 'BINANCE'
     SYMBOLS = [s.strip() for s in
                os.getenv('TEST_SYMBOLS', 'BTCUSDT').split(',') if s.strip()]
-    INTERVAL = Interval.in_1_minute
-    INTERVAL_MINUTES = 1
+    INTERVAL_MINUTES = int(os.getenv('TEST_INTERVAL', '1'))
+    INTERVAL = {1: Interval.in_1_minute,
+                5: Interval.in_5_minute,
+                15: Interval.in_15_minute}.get(INTERVAL_MINUTES,
+                                               Interval.in_1_minute)
     SETTLE_SECONDS = 8
     SESSION_BOUND = False       # 24/7 market: no session window, no date guard
     QUIET = True                # message only when there is an actual signal
@@ -159,8 +162,14 @@ def session_closes(now=None):
     now = now or datetime.now(IST)
 
     if not SESSION_BOUND:
+        # 24/7 market: step by the bar size, aligned to the clock (a 5-minute
+        # bar closes at :00, :05, :10 ... not at an arbitrary offset).
+        step = INTERVAL_MINUTES
         base = now.replace(second=0, microsecond=0)
-        return [base + timedelta(minutes=i) for i in range(1, RUN_MINUTES + 1)]
+        first = (base.replace(minute=0)
+                 + timedelta(minutes=(base.minute // step + 1) * step))
+        count = max(1, RUN_MINUTES // step)
+        return [first + timedelta(minutes=i * step) for i in range(count)]
 
     GRACE = timedelta(minutes=2)
     if now.weekday() > 4:
@@ -467,6 +476,19 @@ def main():
     if manual:
         log("Manual run during the session - taking over for the rest of "
             "the day.")
+
+    # Scheduler test: a scheduled crypto run announces when GitHub actually
+    # woke it. That wake time IS the measurement - it is the number that has
+    # been failing on NSE, and a 24/7 market lets us sample it hourly instead
+    # of once a trading day.
+    if MODE == 'crypto' and os.getenv('GITHUB_EVENT_NAME') == 'schedule':
+        now = datetime.now(IST)
+        send_telegram(
+            f"\U0001F9EA <b>BTC scheduler test</b>\n"
+            f"GitHub started this run at <b>{now.strftime('%H:%M:%S')} IST</b>\n"
+            f"<i>{INTERVAL_MINUTES}-min bars · watching "
+            f"{len(closes)} closes ({closes[0].strftime('%H:%M')} → "
+            f"{closes[-1].strftime('%H:%M')}) · signals follow if any</i>")
 
     log(f"Session mode: {len(closes)} bar closes ahead "
         f"({closes[0].strftime('%H:%M')} -> {closes[-1].strftime('%H:%M')} IST)")
