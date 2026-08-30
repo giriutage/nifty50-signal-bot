@@ -1,102 +1,149 @@
 # NIFTY50 Signal Bot — TradingView → Telegram
 
-Automated BUY/SELL alerts from a **UT Bot + Linear Regression Candles** indicator,
-pulled from **TradingView's own data feed** and delivered to Telegram.
+BUY/SELL alerts from a **UT Bot + Linear Regression Candles** indicator, read
+from **TradingView's own data feed** and delivered to Telegram.
 
-Runs on GitHub Actions. No PC required, no TradingView Pro, no broker subscription.
+Runs entirely on GitHub Actions. No PC left on, no TradingView Pro, no broker
+subscription, no cost.
+
+> ### ⚠️ The bot works. The strategy does not.
+>
+> The delivery pipeline is live and verified — alerts land ~25 seconds after
+> each candle closes. But extensive backtesting (see **Research findings**)
+> shows these signals carry **no tradeable edge after costs**. Buy-and-hold
+> NIFTY beat the best variant on both return *and* drawdown.
+>
+> Treat the alerts as an indicator feed, not trade recommendations. The signal
+> logic is meant to be replaced once a better strategy is found; everything
+> else here is reusable as-is.
+
+---
+
+## Pipeline
+
+```
+GitHub Actions (cron) → tvDatafeed (TradingView websocket)
+    → UT Bot + LinReg → Telegram Bot API → phone
+```
 
 ---
 
 ## Why TradingView as the data source
 
-The indicator was built and validated on a TradingView chart. Any other data
-provider introduces small OHLC discrepancies that shift signal timing.
-`tvDatafeed` connects to TradingView's websocket and returns the *same bars that
-draw your chart* — so signal parity is exact by construction, not by approximation.
+The indicator was built and validated on a TradingView chart. Any other
+provider introduces OHLC drift that shifts signal timing. `tvDatafeed` reads
+TradingView's own websocket, so the bars are the ones that draw your chart —
+parity by construction rather than approximation.
 
-Verified against the live chart on NSE:RELIANCE 30-min: 8/8 signals matched.
+Verified against the live chart on NSE:RELIANCE 30-min: **8/8 signals matched**.
 
-### Sources evaluated and rejected
+### Alternatives evaluated and rejected
 
 | Source | Outcome |
 |---|---|
-| **NSEPython** | Dead. NSE geo-blocks non-Indian IPs (403), and its public API only serves *daily* candles — never 30-min. |
-| **Zerodha enctoken** | Works, but the token expires every 24h with no automatable refresh. |
-| **Kite Connect** | Requires a ₹2,000/month subscription. |
-| **yfinance** | Works, but OHLC values drift from TradingView. Retained as a dormant fallback (`cloud_nifty_bot.py`). |
+| **NSEPython** | Dead twice over: NSE geo-blocks non-Indian IPs (HTTP 403), and its public API serves *daily* candles only — never 30-min. |
+| **Zerodha enctoken** | Works, but expires every 24h with no refresh that survives a headless runner. |
+| **Kite Connect** | ₹2,000/month for any historical access. |
+| **yfinance** | Works, but OHLC drifts from TradingView. Kept dormant in `cloud_nifty_bot.py`. |
 
 ---
 
 ## How signals are evaluated
 
-Signals are read from the **last _closed_ 30-minute bar**, never the bar currently
-forming.
+Signals come from the **last _closed_ 30-minute bar**, never the forming one.
 
-This matters. The forming bar's close keeps moving until the bar completes, so
-evaluating it produces **repainting** — an alert appears, then the bar closes the
-other way and the signal vanishes. Only closed bars are evaluated, so every alert
-is final.
+The forming bar's close keeps moving until the bar completes, so evaluating it
+causes **repainting** — an alert fires, then the bar closes the other way and
+the signal vanishes. Only closed bars are used, so every alert is final.
 
-The closed bar is selected **by timestamp, not by position**. A bar labelled `T`
-closes at `T + 30min`, so the newest bar satisfying `T + 30min <= now` is the one
-to evaluate. Positional indexing (`-2`) silently picks the wrong bar whenever the
-forming bar has not yet been emitted — which made alerts a full bar stale.
+The closed bar is chosen **by timestamp, not position**: a bar labelled `T`
+closes at `T + 30min`, so the newest bar where `T + 30min <= now` is the one to
+evaluate. Positional indexing (`-2`) silently picks the wrong bar whenever the
+forming bar has not yet been emitted, which once made every alert a full bar
+stale.
 
----
+### Indicator parameters
 
-## Indicator parameters
-
-These mirror the Pine Script exactly. Changing one here without changing it on
-the chart will desynchronise the alerts.
+These must mirror the Pine Script on the chart exactly.
 
 | Parameter | Value |
 |---|---|
 | UT Bot — Key Value | `2` |
 | UT Bot — ATR Period | `1` |
-| LinReg — Signal Smoothing | `6` |
+| LinReg — Signal Smoothing | `7` |
 | LinReg — Simple MA (Signal Line) | `true` |
-| LinReg — Linear Regression Length | `8` |
+| LinReg — Linear Regression Length | `11` |
 
-Confidence is `HIGH` when the LinReg candle colour agrees with the UT Bot
+Confidence is `HIGH` when the LinReg candle colour agrees with the signal
 direction (BUY+green / SELL+red), otherwise `MEDIUM`.
+
+> **Only Key Value and ATR Period change which signals fire.** In the Pine
+> Script, `buy`/`sell` derive solely from `src` and `xATRTrailingStop`. The
+> LinReg values feed `plotcandle` and the signal line only — they recolour
+> candles, which the bot reads as the confidence label, and nothing more.
+> Verified: 6/8 and 7/11 both produced 49 BUY + 49 SELL over the same 1,000
+> bars, differing only in the confidence split.
 
 ---
 
-## Timing
+## Scheduling — the hard part
 
-**Measured feed lag is ~2 seconds** (median 2.4s, max 5.8s across six bar
-boundaries — see `measure_feed_lag.py`). The feed is effectively instant and is
-never what delays an alert.
+**The feed is not the constraint.** Measured lag from bar close to bar
+availability is **~2 seconds** (median 2.4s, max 5.8s — see
+`measure_feed_lag.py`).
 
-**GitHub's scheduler was.** Running this as 12 separate scheduled jobs was tried
-and failed in production: cron dropped roughly **half** the runs — a full session
-produced alerts for only the `:45` bars, never the `:15` ones — and started the
-survivors **5–22 minutes late**. Alerts arrived hourly and irregularly.
+**GitHub's scheduler is.** It is best-effort and, measured over 39 hours on a
+24/7 BTC test, *sparse* rather than merely late: when it starts a run it is
+4–30 minutes late (median 11), but it started only **10 runs against ~78
+slots**, with gaps of 142–415 minutes.
 
-So GitHub is now asked to start the bot **once per day**, and the job holds the
-runner for the session, sleeping to each bar close itself. A `sleep` is exact; a
-queue is not.
+Two designs were tried and abandoned in production:
 
-```
-cron: '6,9,12 4 * * 1-5'   # UTC → IST 09:36 / 09:39 / 09:42
-```
+| Design | Outcome |
+|---|---|
+| 12 short scheduled runs/day | ~half dropped; a full session alerted only on `:45` bars |
+| One long job, 2 phases | 43-min delay lost the opening bars; 61%/phase, **15% silent days** |
 
-- Three start triggers three minutes apart, so a dropped trigger costs nothing.
-- `concurrency: trading-session` keeps exactly one session live.
-- The job wakes at 09:45, 10:15 … 15:15 IST — 12 bar closes — scanning ~25s
-  after each, then exits.
-- A leftover queued job that starts as the session ends sees fewer than two
-  closes remaining and exits rather than duplicating the final bar.
+### Current design: four phases
 
-Session length is ~5h40m against GitHub's 6h job ceiling (`timeout-minutes: 350`).
+One job per phase holds the runner and **sleeps to each bar close itself** — a
+sleep is exact, a queue is not. The only defence against a sparse scheduler is
+a **wide trigger window**, and window width is capped by GitHub's **6-hour job
+ceiling**: a phase must end just after its last close, so fewer closes per
+phase means an earlier legal start and a wider window.
 
-> **This requires a public repository.** A daily ~5h40m job needs ~7,300
-> minutes/month, far beyond the 2,000 allowed on private repos. Public repos get
-> unlimited Actions minutes, and nothing sensitive lives in the code — the
-> Telegram token is a repository Secret and `.env` is gitignored.
+| Phase | Closes (IST) | Cron (UTC) | Triggers (IST) | Window |
+|---|---|---|---|---|
+| 1 | 09:45, 10:15, 10:45 | `7,23,39,53 0-4` | 05:37 … 10:23 | 286 min |
+| 2 | 11:15, 11:45, 12:15 | `7,23,39,53 1-6` | 06:37 … 12:23 | 346 min |
+| 3 | 12:45, 13:15, 13:45 | `7,23,39,53 3-8` | 08:37 … 14:23 | 346 min |
+| 4 | 14:15, 14:45, 15:15 | `7,23,39,53 4-9` | 09:37 … 15:23 | 346 min |
 
-Manual `workflow_dispatch` runs perform a single immediate scan instead of
-occupying a runner all day, so the bot stays testable outside market hours.
+| | 2 phases | **4 phases** |
+|---|---|---|
+| Chance a phase fires | 61% | **88–97%** |
+| Expected delivery | 61% | **~94% of 12 bars** |
+| Completely silent day | 15% | **0.0004%** |
+
+- **Never schedule on `:00` or `:30`.** Those coincided with 8–10 hour delays
+  on 27–28 Aug 2026; `:06/:36` only ever saw 1–22 minutes.
+- Phases cover disjoint closes, so overlapping phases cannot double-alert. Each
+  has its own concurrency group so none queues behind another.
+- **Every scheduled run sends a startup ping.** A phase GitHub never starts
+  sends nothing — so a *missing* ping is how a skipped phase becomes visible.
+
+> **Requires a public repository.** Four daily multi-hour jobs far exceed the
+> 2,000 minutes allowed on private repos. Public repos get unlimited Actions
+> minutes, and nothing sensitive is in the code — Telegram credentials are
+> repository Secrets and `.env` is gitignored.
+
+### Getting to 100%
+
+`repository_dispatch` is honoured **immediately** (measured 0s queue delay), so
+an external scheduler posting `{"event_type":"scan"}` to
+`/repos/OWNER/REPO/dispatches` removes GitHub's cron from the path entirely.
+`manual.yml` already accepts it — it needs only a GitHub token with
+**Contents: Read and write** stored in a free scheduler such as cron-job.org.
 
 ---
 
@@ -110,16 +157,15 @@ occupying a runner all day, so the bot stays testable outside market hours.
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | ✅ | From `@BotFather` |
 | `TELEGRAM_CHAT_ID` | ✅ | From `@userinfobot` |
-| `TV_USERNAME` | optional | TradingView login |
-| `TV_PASSWORD` | optional | TradingView login |
+| `TV_USERNAME` / `TV_PASSWORD` | optional | Use your TradingView data entitlement instead of anonymous |
 
-The TradingView credentials are optional. Anonymous access works; supplying them
-makes the feed use *your* account's data entitlement, matching your chart exactly.
+Anonymous TradingView access is **confirmed working from GitHub's US datacenter
+IPs**. The credentials only matter if NSE data proves delayed.
 
-### 2. First run
+### 2. Test it
 
-**Actions → NIFTY50 Signal Bot → Run workflow.** A Telegram message should arrive
-within a minute — either signals, or a "No signals" confirmation.
+**Actions → Manual / dispatch → Run workflow.** A Telegram message should
+arrive within a minute — signals, or a "No signals" confirmation.
 
 ---
 
@@ -128,46 +174,98 @@ within a minute — either signals, or a "No signals" confirmation.
 | File | Purpose |
 |---|---|
 | `tv_signal_bot.py` | The bot — fetch, evaluate, alert |
-| `tradingview_indicators.py` | UT Bot + LinReg implementations |
-| `verify_tvdatafeed_quality.py` | Re-check data parity against your chart at any time |
-| `measure_feed_lag.py` | Measure feed lag (bar close → availability) |
-| `requirements.txt` | Dependencies |
-| `.github/workflows/tv-signal-bot.yml` | Schedule |
-| `cloud_nifty_bot.py` | Dormant yfinance fallback — not wired to any workflow |
+| `tradingview_indicators.py` | `ut_bot_alert()`, `linear_reg_candles()` |
+| `.github/workflows/session-1..4.yml` | The four phase schedules |
+| `.github/workflows/manual.yml` | `workflow_dispatch` + `repository_dispatch` |
+| `verify_tvdatafeed_quality.py` | Re-check data parity against the chart |
+| `measure_feed_lag.py` | Measure bar-close → availability lag |
+| `cloud_nifty_bot.py` | Dormant yfinance fallback, wired to nothing |
+
+Plus a backtest harness — see **Research findings**.
 
 ---
 
-## Local run
+## Running it locally
 
 ```bash
 pip install -r requirements.txt
 # put TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID in .env
-python tv_signal_bot.py
+
+python tv_signal_bot.py                    # scheduled-style session run
+FORCE_SCAN=1 python tv_signal_bot.py       # one immediate scan
+BOT_MODE=crypto RUN_MINUTES=30 python tv_signal_bot.py   # fast live test
 ```
 
-To re-verify data parity against your chart:
+### Modes
 
-```bash
-python verify_tvdatafeed_quality.py
-```
+`BOT_MODE` selects the profile (default `nse`):
 
-It prints recent timestamped signals — compare them directly against the
-indicator on your TradingView chart.
+| | `nse` (production) | `crypto` (verification) |
+|---|---|---|
+| Market | NSE, 39 NIFTY50 symbols | BINANCE, `BTCUSDT` |
+| Bars | 30-min, session-bound | 1/5/15-min (`TEST_INTERVAL`), 24/7 |
+| Messages | every bar, incl. "no signals" | only on a real signal |
+
+Crypto mode exists because a 24/7 market exercises the whole pipeline in
+minutes rather than waiting for a session.
+
+### Editing the watchlist
+
+`SYMBOLS` in `tv_signal_bot.py` uses **TradingView** names, which occasionally
+differ from other providers (`BAJAJ_AUTO`, not `BAJAJ-AUTO`). If a symbol
+reports unavailable, check its spelling on TradingView.
 
 ---
 
-## Editing the watchlist
+## Research findings
 
-`SYMBOLS` in `tv_signal_bot.py` uses **TradingView** symbol names, which
-occasionally differ from other providers (e.g. `BAJAJ_AUTO`, not `BAJAJ-AUTO`).
-If a symbol reports as unavailable, confirm its exact spelling on TradingView.
+Tested across futures, options and spot; 30-, 15-, 5-minute and daily bars; six
+months to sixteen years; thousands of parameter combinations with
+out-of-sample splits throughout.
+
+| Variant | Result |
+|---|---|
+| NIFTY futures, 30-min swing | +14% CAGR gross, but one lot forces 7.2% risk on ₹1L — untradeable at that size |
+| Options (Black-Scholes modelled) | Swing: −97% drawdown. Intraday: promising but rests on an unverifiable IV assumption |
+| Spot delivery, daily, long-only | 4.2% CAGR / −33% DD vs **buy-and-hold 10.3% / −17%** — loses on both axes |
+| Spot intraday MIS | Every parameter set net negative; costs (63 R) exceed gross edge (44 R) |
+
+**The recurring arithmetic:** per-trade edge of +0.02 to +0.06 R against costs
+of 0.04 to 0.12 R. Too many trades for the edge each carries — not fixable by
+tuning.
+
+The colour/line filter **subtracts** value at every timeframe tested: it enters
+later, not better.
+
+### Reusable test harness
+
+Point these at new signal logic rather than rewriting them:
+
+| Script | Purpose |
+|---|---|
+| `backtest_index.py` | Single instrument, multi-timeframe |
+| `optimise_index.py` | Grid search with in/out-of-sample split |
+| `optimise_landscape.py` | Parameter heat-map — plateaus vs lucky spikes |
+| `robustness_test.py` | Regime testing with realistic gap fills |
+| `intraday_test.py` · `intraday_rr_sweep.py` | Forced-flat-at-close variants |
+| `rupee_simulation.py` | Itemised Indian charges on a real capital base |
+| `spot_swing_backtest.py` | Portfolio sim with capital constraints |
+| `options_backtest.py` | Black-Scholes option pricing |
+| `backtest_nifty.py` · `backtest_sweep.py` · `validate_best.py` | Stock-basket tests and validation |
+
+**Always benchmark against buy-and-hold.** That comparison is what settled this,
+and it was added last rather than first.
 
 ---
 
 ## Known limitations
 
-- **NSE real-time vs delayed** depends on your TradingView data entitlement. The
-  transport is live (verified: sub-minute lag on a 24/7 market), but NSE-specific
-  freshness should be confirmed during a live session.
+- **~94% delivery, not 100%.** Roughly one bar in twenty may go missing when
+  GitHub skips a phase's entire trigger window. The external trigger above is
+  the only route to 100%.
+- **NSE real-time vs delayed** depends on TradingView account entitlement, not
+  on code. Every message prints `bar closed X min ago`: ~0.4 min means
+  real-time, ~15 min means delayed.
 - The `15:15` stub bar (15:15–15:30) is not consistently emitted as a 30-min bar.
-- Duplicate alerts are possible if GitHub's scheduler fires very late.
+- `tvdatafeed` installs from GitHub, not PyPI, and caps history at ~5,300 bars
+  for 30-min data (~1.65 years).
