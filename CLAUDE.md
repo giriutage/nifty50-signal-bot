@@ -36,7 +36,12 @@ GitHub Actions (cron) → tvDatafeed (TradingView websocket)
 | `.github/workflows/manual.yml` | `workflow_dispatch` + `repository_dispatch` |
 | `verify_tvdatafeed_quality.py` | Re-check data parity against the chart |
 | `measure_feed_lag.py` | Measure bar-close → availability lag |
-| `cloud_nifty_bot.py` | **Dormant** yfinance fallback. Wired to nothing. |
+
+That is the whole repo. Twelve backtest scripts and a dormant yfinance
+fallback were deleted once the research concluded — they were all wired to
+`ut_bot_alert()`, so a different strategy would need them rewritten anyway.
+**They live in git at `8ef3565`**; recover any with
+`git show 8ef3565:<file> > <file>`.
 
 ## Invariants — do not break these
 
@@ -159,9 +164,9 @@ spot variant: 4.2% CAGR / −33% DD against **buy-and-hold 10.3% / −17%**.
 0.04 to 0.12 R. Too many trades for the edge each carries — not fixable by
 tuning. The colour/line filter *subtracts* value at every timeframe.
 
-Full tables and the reusable backtest harness are in `README.md`. **Always
-benchmark against buy-and-hold** — that comparison settled this, and it was
-added last rather than first.
+Full result tables are in `README.md`. **Always benchmark against
+buy-and-hold** — that comparison settled this, and it was added last rather
+than first.
 
 ## Verification
 

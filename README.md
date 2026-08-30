@@ -179,9 +179,8 @@ arrive within a minute — signals, or a "No signals" confirmation.
 | `.github/workflows/manual.yml` | `workflow_dispatch` + `repository_dispatch` |
 | `verify_tvdatafeed_quality.py` | Re-check data parity against the chart |
 | `measure_feed_lag.py` | Measure bar-close → availability lag |
-| `cloud_nifty_bot.py` | Dormant yfinance fallback, wired to nothing |
 
-Plus a backtest harness — see **Research findings**.
+That's the whole repo — five files and five workflows.
 
 ---
 
@@ -237,21 +236,21 @@ tuning.
 The colour/line filter **subtracts** value at every timeframe tested: it enters
 later, not better.
 
-### Reusable test harness
+### The backtest code
 
-Point these at new signal logic rather than rewriting them:
+Twelve scripts produced these results — grid search with out-of-sample splits,
+parameter heat-maps, regime testing with realistic gap fills, portfolio
+simulation under capital constraints, Black-Scholes option pricing, and an
+itemised Indian-charges model.
 
-| Script | Purpose |
-|---|---|
-| `backtest_index.py` | Single instrument, multi-timeframe |
-| `optimise_index.py` | Grid search with in/out-of-sample split |
-| `optimise_landscape.py` | Parameter heat-map — plateaus vs lucky spikes |
-| `robustness_test.py` | Regime testing with realistic gap fills |
-| `intraday_test.py` · `intraday_rr_sweep.py` | Forced-flat-at-close variants |
-| `rupee_simulation.py` | Itemised Indian charges on a real capital base |
-| `spot_swing_backtest.py` | Portfolio sim with capital constraints |
-| `options_backtest.py` | Black-Scholes option pricing |
-| `backtest_nifty.py` · `backtest_sweep.py` · `validate_best.py` | Stock-basket tests and validation |
+They were **deleted once the research concluded**. Every one was wired to
+`ut_bot_alert()`, so a different strategy would need them substantially
+rewritten rather than reused. They remain in git history at commit `8ef3565`:
+
+```bash
+git show 8ef3565:optimise_index.py > optimise_index.py    # recover any of them
+git show 8ef3565 --stat                                    # see the full list
+```
 
 **Always benchmark against buy-and-hold.** That comparison is what settled this,
 and it was added last rather than first.
