@@ -1,0 +1,58 @@
+name: Session 1 (09:45-10:45)
+
+# ---------------------------------------------------------------------------
+# The trading day is split into FOUR phases. Each covers three bar closes.
+#
+# Why: a phase's job must finish shortly after its LAST close, and GitHub caps
+# a job at 6 hours. Fewer closes per phase => the job ends earlier => it can
+# legally start earlier => a WIDER window in which GitHub might deign to start
+# it. Window width is the only thing that matters, because GitHub's scheduler
+# is sparse: measured over 39 hours it started a run roughly every 2.4-7 hours.
+#
+#   166-min window (2 phases) -> 61% chance a phase fires, 15% silent days
+#   ~290-min window (4 phases) -> ~88% chance, ~0.02% silent days
+#
+# Minutes are :07/:23/:39/:53 - deliberately off :00/:30, which coincided with
+# 8-10 hour delays on 27-28 Aug.
+#
+# Phases cover disjoint closes, so overlapping phases cannot double-alert.
+# Each has its own concurrency group so no phase is queued behind another.
+# ---------------------------------------------------------------------------
+#
+# Closes: 09:45, 10:15, 10:45 IST   (job ends ~10:46)
+# Triggers: UTC 00:07 -> 04:53  =  IST 05:37 -> 10:23
+# Longest run: 05:37 -> 10:46 = 5h09m, inside the 6h ceiling.
+on:
+  schedule:
+    - cron: '7,23,39,53 0-4 * * 1-5'
+
+concurrency:
+  group: session-1
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run session phase 1
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PHASE_FIRST_CLOSE: '09:45'
+          PHASE_LAST_CLOSE: '10:45'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+        run: python -u tv_signal_bot.py

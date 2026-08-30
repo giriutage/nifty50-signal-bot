@@ -32,8 +32,7 @@ GitHub Actions (cron) → tvDatafeed (TradingView websocket)
 |---|---|
 | `tv_signal_bot.py` | The bot: fetch → evaluate → alert |
 | `tradingview_indicators.py` | `ut_bot_alert()`, `linear_reg_candles()` |
-| `.github/workflows/session-morning.yml` | Phase A schedule (09:45–12:15 IST) |
-| `.github/workflows/session-afternoon.yml` | Phase B schedule (12:45–15:15 IST) |
+| `.github/workflows/session-1..4.yml` | The four phase schedules (3 bar closes each) |
 | `.github/workflows/manual.yml` | `workflow_dispatch` + `repository_dispatch`, no phase limit |
 | `verify_tvdatafeed_quality.py` | Re-check data parity against the chart |
 | `measure_feed_lag.py` | Measure bar-close → availability lag |
@@ -95,31 +94,42 @@ late**. `concurrency` made it worse: GitHub keeps only one *pending* run per
 group and silently cancels the queued one when a third arrives.
 
 Current design: the job holds the runner and sleeps to each bar close itself.
-The day is split into **two phases**, each started well ahead of the bars it
-covers.
+The day is split into **four phases of three bar closes each**.
 
-**Why two phases, not one job.** Starting 09:36 for a 09:45 first close left
-only 9 minutes of slack. On 2026-08-26 GitHub started 43 min late and the 09:45
-and 10:15 bars were lost. The cure is a long head start — but one job covering
-07:30 → 15:16 IST is 7h46m and would breach GitHub's hard **6-hour job
-ceiling**. Splitting the day buys each half ~2h of buffer *and* keeps it at
-4h46m.
+**Why four.** GitHub's scheduler is *sparse*, not merely late. Measured over 39
+hours on a 24/7 BTC test: when it does start a run it is 4–30 min late (median
+11), but it only started 10 runs against ~78 slots, with gaps of 142–415 min.
 
-| | Phase A | Phase B |
+Only one thing counters that — a **wide trigger window**, so some trigger lands
+inside it. Window width is capped by GitHub's **6-hour job ceiling**: a phase's
+job must end just after its last close, so fewer closes per phase ⇒ earlier
+legal start ⇒ wider window.
+
+| Window | P(phase fires) | Silent days |
 |---|---|---|
-| Closes | 09:45 → 12:15 IST | 12:45 → 15:15 IST |
-| Cron (UTC) | `0,30 2-4 * * 1-5` | `0,30 5-7 * * 1-5` |
-| Triggers (IST) | 07:30 … 10:00 | 10:30 … 13:00 |
-| Concurrency | `session-morning` | `session-afternoon` |
+| 166 min (2 phases) | 61% | 15% |
+| **286–346 min (4 phases)** | **88–97%** | **0.0004%** |
 
-- **Separate concurrency groups** so B is never queued behind a running A. The
-  close ranges are disjoint, so concurrent phases cannot double-alert.
+| Phase | Closes (IST) | Cron (UTC) | Triggers (IST) | Window |
+|---|---|---|---|---|
+| 1 | 09:45, 10:15, 10:45 | `7,23,39,53 0-4` | 05:37 … 10:23 | 286 min |
+| 2 | 11:15, 11:45, 12:15 | `7,23,39,53 1-6` | 06:37 … 12:23 | 346 min |
+| 3 | 12:45, 13:15, 13:45 | `7,23,39,53 3-8` | 08:37 … 14:23 | 346 min |
+| 4 | 14:15, 14:45, 15:15 | `7,23,39,53 4-9` | 09:37 … 15:23 | 346 min |
+
+Expected delivery ≈ **94% of the 12 daily bars**.
+
+- Minutes are `:07/:23/:39/:53`. **Never use `:00`/`:30`** — those coincided
+  with 8–10 hour delays on 27–28 Aug; `:06/:36` only ever saw 1–22 min.
+- Closes are disjoint, so overlapping phases cannot double-alert. Each phase
+  has its own concurrency group so none is queued behind another.
+- No "leftover run" guard is needed: `cancel-in-progress: false` means a second
+  run of a phase can only start after the first ends, by which time its closes
+  have passed and `not closes` ends it.
+- **Every scheduled run sends a startup ping.** A phase GitHub never starts
+  sends nothing — so a missing ping is how a skipped phase becomes visible.
 - `PHASE_FIRST_CLOSE` / `PHASE_LAST_CLOSE` bound `session_closes()`; unset means
-  the full day, which is what `manual.yml` uses.
-- `len(closes) < 2` on a *scheduled* run means a leftover queued job starting as
-  the phase ends — it exits rather than duplicating the final bar. A *manual*
-  run instead takes over the rest of the day, which is the recovery path.
-- Losing a whole phase's triggers costs that half only, never the whole day.
+  the full day, which `manual.yml` uses as the recovery path.
 
 **The repo must stay PUBLIC.** A daily 5h40m job needs ~7,300 min/month vs the
 2,000 private allowance. Public repos get unlimited minutes.

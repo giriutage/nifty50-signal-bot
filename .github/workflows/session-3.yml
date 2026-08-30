@@ -1,0 +1,41 @@
+name: Session 3 (12:45-13:45)
+
+# Phase 3 of 4. See session-1.yml for why the day is split this way.
+#
+# Closes: 12:45, 13:15, 13:45 IST   (job ends ~13:46)
+# Triggers: UTC 03:07 -> 08:53  =  IST 08:37 -> 14:23
+# Longest run: 08:37 -> 13:46 = 5h09m, inside the 6h ceiling.
+on:
+  schedule:
+    - cron: '7,23,39,53 3-8 * * 1-5'
+
+concurrency:
+  group: session-3
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run session phase 3
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PHASE_FIRST_CLOSE: '12:45'
+          PHASE_LAST_CLOSE: '13:45'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TV_USERNAME: ${{ secrets.TV_USERNAME }}
+          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+        run: python -u tv_signal_bot.py

@@ -464,31 +464,34 @@ def main():
                 f"delayed.</i>")
         return
 
-    # Redundant start triggers mean one job can sit queued behind the live
-    # one and only begin as the session ends. Such a leftover would re-alert
-    # the final bar. A genuine start always has most of the day ahead of it,
-    # so a near-empty schedule identifies the leftover.
-    if SESSION_BOUND and not manual and len(closes) < 2:
-        log(f"Only {len(closes)} close left - this is a leftover queued run. "
-            f"Exiting rather than duplicating the final bar.")
-        return
+    # No "leftover run" guard is needed. Each phase has its own concurrency
+    # group with cancel-in-progress: false, so a second run of the same phase
+    # can never execute alongside the first - it queues and only starts once
+    # the first has finished, by which time its closes have passed and the
+    # `not closes` check above ends it. Dropping the guard means a phase whose
+    # only surviving trigger arrives late still delivers its remaining bar
+    # instead of discarding it.
 
     if manual:
         log("Manual run during the session - taking over for the rest of "
             "the day.")
 
-    # Scheduler test: a scheduled crypto run announces when GitHub actually
-    # woke it. That wake time IS the measurement - it is the number that has
-    # been failing on NSE, and a 24/7 market lets us sample it hourly instead
-    # of once a trading day.
-    if MODE == 'crypto' and os.getenv('GITHUB_EVENT_NAME') == 'schedule':
+    # Announce what this run will cover. GitHub can silently decline to start
+    # a scheduled workflow at all, in which case nothing here executes and no
+    # message is sent - so the ABSENCE of a phase's ping is how a missed phase
+    # becomes visible. Without it a skipped phase is indistinguishable from a
+    # quiet market.
+    if os.getenv('GITHUB_EVENT_NAME') == 'schedule':
         now = datetime.now(IST)
+        label = ("BTC scheduler test" if MODE == 'crypto'
+                 else f"Session started · covering {len(closes)} bar"
+                      f"{'s' if len(closes) != 1 else ''}")
         send_telegram(
-            f"\U0001F9EA <b>BTC scheduler test</b>\n"
-            f"GitHub started this run at <b>{now.strftime('%H:%M:%S')} IST</b>\n"
-            f"<i>{INTERVAL_MINUTES}-min bars · watching "
-            f"{len(closes)} closes ({closes[0].strftime('%H:%M')} → "
-            f"{closes[-1].strftime('%H:%M')}) · signals follow if any</i>")
+            f"\U0001F7E6 <b>{label}</b>\n"
+            f"Woke {now.strftime('%H:%M:%S')} IST · will alert on "
+            f"{closes[0].strftime('%H:%M')}"
+            + (f" → {closes[-1].strftime('%H:%M')}" if len(closes) > 1 else "")
+            + f"\n<i>{INTERVAL_MINUTES}-min bars · {len(SYMBOLS)} symbols</i>")
 
     log(f"Session mode: {len(closes)} bar closes ahead "
         f"({closes[0].strftime('%H:%M')} -> {closes[-1].strftime('%H:%M')} IST)")
