@@ -3,28 +3,33 @@ name: Session 1 (09:45-10:45)
 # ---------------------------------------------------------------------------
 # The trading day is split into FOUR phases. Each covers three bar closes.
 #
-# Why: a phase's job must finish shortly after its LAST close, and GitHub caps
-# a job at 6 hours. Fewer closes per phase => the job ends earlier => it can
-# legally start earlier => a WIDER window in which GitHub might deign to start
-# it. Window width is the only thing that matters, because GitHub's scheduler
-# is sparse: measured over 39 hours it started a run roughly every 2.4-7 hours.
+# WHERE THE TRIGGER WINDOW ENDS IS WHAT MATTERS - not how wide it is.
 #
-#   166-min window (2 phases) -> 61% chance a phase fires, 15% silent days
-#   ~290-min window (4 phases) -> ~88% chance, ~0.02% silent days
+# Measured 31 Aug / 1 Sep: GitHub does not sample randomly from a workflow's
+# cron slots. It fires ONE run per workflow per day, at or shortly after the
+# LAST slot (+1, +5, +30, +45, +54 min observed).
 #
-# Minutes are :07/:23/:39/:53 - deliberately off :00/:30, which coincided with
-# 8-10 hour delays on 27-28 Aug.
+# The previous design widened windows by extending them LATER, so phase 1's
+# triggers ran to 10:23 - past the 09:45 and 10:15 closes. GitHub duly fired at
+# 10:23+, when those bars were already unreachable. It delivered 0/12 bars on
+# 31 Aug and 4/12 on 1 Sep.
 #
-# Phases cover disjoint closes, so overlapping phases cannot double-alert.
-# Each has its own concurrency group so no phase is queued behind another.
+# So each phase's LAST trigger now sits well BEFORE its FIRST close, leaving
+# more margin than the worst lateness seen (+54 min). Extra triggers earlier in
+# the window are harmless redundancy; the last one is what actually fires.
+#
+# Minutes stay off :00/:30, which coincided with 8-10 hour delays on 27-28 Aug.
+# Phases cover disjoint closes, so they cannot double-alert. Each has its own
+# concurrency group so no phase queues behind another.
 # ---------------------------------------------------------------------------
 #
 # Closes: 09:45, 10:15, 10:45 IST   (job ends ~10:46)
-# Triggers: UTC 00:07 -> 04:53  =  IST 05:37 -> 10:23
+# Triggers: UTC 00:07 -> 02:53  =  IST 05:37 -> 08:23
+# Margin from last trigger to first close: 82 min  (worst seen: 54)
 # Longest run: 05:37 -> 10:46 = 5h09m, inside the 6h ceiling.
 on:
   schedule:
-    - cron: '7,23,39,53 0-4 * * 1-5'
+    - cron: '7,23,39,53 0-2 * * 1-5'
 
 concurrency:
   group: session-1

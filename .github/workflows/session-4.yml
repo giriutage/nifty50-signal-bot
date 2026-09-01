@@ -3,11 +3,12 @@ name: Session 4 (14:15-15:15)
 # Phase 4 of 4. See session-1.yml for why the day is split this way.
 #
 # Closes: 14:15, 14:45, 15:15 IST   (job ends ~15:16)
-# Triggers: UTC 04:07 -> 09:53  =  IST 09:37 -> 15:23
+# Triggers: UTC 04:07 -> 06:53  =  IST 09:37 -> 12:23
+# Margin from last trigger to first close: 112 min  (worst seen: 54)
 # Longest run: 09:37 -> 15:16 = 5h39m, inside the 6h ceiling.
 on:
   schedule:
-    - cron: '7,23,39,53 4-9 * * 1-5'
+    - cron: '7,23,39,53 4-6 * * 1-5'
 
 concurrency:
   group: session-4
