@@ -87,26 +87,39 @@ chart on NSE:RELIANCE 30-min.
 
 ## Scheduling — four phases, and why
 
-**The feed is not the constraint** (~2s lag). **GitHub's scheduler is**, and it
-is *sparse*, not merely late: measured over 39h on a 24/7 BTC test it started
-only **10 runs against ~78 slots**, gaps of 142–415 min, 4–30 min late when it
-did fire.
+**The feed is not the constraint** (~2s lag). **GitHub's scheduler is.**
 
-Each phase job holds the runner and **sleeps to each bar close itself** — a
-sleep is exact, a queue is not. The only defence against sparseness is a **wide
-trigger window**, capped by GitHub's **6-hour job ceiling**: a phase must end
-just after its last close, so fewer closes ⇒ earlier legal start ⇒ wider window.
+**The governing fact — measured 31 Aug / 1 Sep 2026:** GitHub does *not* sample
+randomly from a workflow's cron slots. It fires **one run per workflow per day,
+at or just after the LAST slot** (+1, +5, +30, +45, +54 min observed).
 
-| Phase | Closes (IST) | Cron (UTC) | Window |
-|---|---|---|---|
-| 1 | 09:45, 10:15, 10:45 | `7,23,39,53 0-4` | 286 min |
-| 2 | 11:15, 11:45, 12:15 | `7,23,39,53 1-6` | 346 min |
-| 3 | 12:45, 13:15, 13:45 | `7,23,39,53 3-8` | 346 min |
-| 4 | 14:15, 14:45, 15:15 | `7,23,39,53 4-9` | 346 min |
+So **where the window ENDS is what matters, not how wide it is.** A design that
+widened windows by extending them later put phase 1's last trigger at 10:23 —
+past the 09:45 and 10:15 closes — and GitHub duly fired then, when those bars
+were already unreachable. It delivered **0/12 bars on 31 Aug, 4/12 on 1 Sep**.
 
-Two earlier designs failed in production — 12 short runs/day (half dropped),
-and one long job in 2 phases (61%/phase, 15% silent days). Four phases give
-88–97%/phase, ~94% delivery, 0.0004% silent days.
+Each phase's job holds the runner and **sleeps to each bar close itself** — a
+sleep is exact, a queue is not. Each phase's LAST trigger sits **82–112 min
+before its FIRST close**, against a worst observed lateness of 54 min.
+
+| Phase | Closes (IST) | Cron (UTC) | Triggers (IST) | Margin |
+|---|---|---|---|---|
+| 1 | 09:45, 10:15, 10:45 | `7,23,39,53 0-2` | 05:37–08:23 | 82 min |
+| 2 | 11:15, 11:45, 12:15 | `7,23,39,53 1-3` | 06:37–09:23 | 112 min |
+| 3 | 12:45, 13:15, 13:45 | `7,23,39,53 3-5` | 08:37–11:23 | 82 min |
+| 4 | 14:15, 14:45, 15:15 | `7,23,39,53 4-6` | 09:37–12:23 | 112 min |
+
+Replaying 31 Aug's actual delays through these windows: all four phases start
+before their first close and deliver 3/3 bars.
+
+**When changing a cron, check the LAST slot against the FIRST close** — that
+single relationship decides whether a phase delivers anything. Widening a
+window later is actively harmful. Job length is capped by the **6-hour
+ceiling** (current runs 5.15–5.65h).
+
+Earlier failures: 12 short runs/day (half dropped); one long job in 2 phases
+(43-min delay lost the opening bars); 4 phases with late-extending windows
+(0–33% delivery).
 
 - **Never schedule on `:00` or `:30`** — those coincided with 8–10 hour delays
   on 27–28 Aug 2026; `:06/:36` only ever saw 1–22 min.

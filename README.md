@@ -104,33 +104,43 @@ Two designs were tried and abandoned in production:
 | 12 short scheduled runs/day | ~half dropped; a full session alerted only on `:45` bars |
 | One long job, 2 phases | 43-min delay lost the opening bars; 61%/phase, **15% silent days** |
 
+### The governing fact
+
+**GitHub fires one run per workflow per day, at or just after the LAST cron
+slot** — not randomly from the window. Measured 31 Aug / 1 Sep 2026: +1, +5,
++30, +45, +54 minutes after the final slot.
+
+**So where the window ends is what matters, not how wide it is.** An earlier
+design widened windows by extending them *later*, putting phase 1's last
+trigger at 10:23 — past the 09:45 and 10:15 closes. GitHub fired then, when
+those bars were already unreachable: **0 of 12 bars on 31 Aug, 4 of 12 on
+1 Sep.**
+
 ### Current design: four phases
 
 One job per phase holds the runner and **sleeps to each bar close itself** — a
-sleep is exact, a queue is not. The only defence against a sparse scheduler is
-a **wide trigger window**, and window width is capped by GitHub's **6-hour job
-ceiling**: a phase must end just after its last close, so fewer closes per
-phase means an earlier legal start and a wider window.
+sleep is exact, a queue is not. Each phase's **last trigger sits 82–112 minutes
+before its first close**, against a worst observed lateness of 54 minutes.
 
-| Phase | Closes (IST) | Cron (UTC) | Triggers (IST) | Window |
+| Phase | Closes (IST) | Cron (UTC) | Triggers (IST) | Margin |
 |---|---|---|---|---|
-| 1 | 09:45, 10:15, 10:45 | `7,23,39,53 0-4` | 05:37 … 10:23 | 286 min |
-| 2 | 11:15, 11:45, 12:15 | `7,23,39,53 1-6` | 06:37 … 12:23 | 346 min |
-| 3 | 12:45, 13:15, 13:45 | `7,23,39,53 3-8` | 08:37 … 14:23 | 346 min |
-| 4 | 14:15, 14:45, 15:15 | `7,23,39,53 4-9` | 09:37 … 15:23 | 346 min |
+| 1 | 09:45, 10:15, 10:45 | `7,23,39,53 0-2` | 05:37 … 08:23 | 82 min |
+| 2 | 11:15, 11:45, 12:15 | `7,23,39,53 1-3` | 06:37 … 09:23 | 112 min |
+| 3 | 12:45, 13:15, 13:45 | `7,23,39,53 3-5` | 08:37 … 11:23 | 82 min |
+| 4 | 14:15, 14:45, 15:15 | `7,23,39,53 4-6` | 09:37 … 12:23 | 112 min |
 
-| | 2 phases | **4 phases** |
-|---|---|---|
-| Chance a phase fires | 61% | **88–97%** |
-| Expected delivery | 61% | **~94% of 12 bars** |
-| Completely silent day | 15% | **0.0004%** |
+Replaying 31 Aug's real delays through these windows, all four phases start
+before their first close and deliver 3/3 bars.
 
+- **When changing a cron, check the last slot against the first close.** That
+  one relationship decides whether a phase delivers anything.
 - **Never schedule on `:00` or `:30`.** Those coincided with 8–10 hour delays
   on 27–28 Aug 2026; `:06/:36` only ever saw 1–22 minutes.
-- Phases cover disjoint closes, so overlapping phases cannot double-alert. Each
-  has its own concurrency group so none queues behind another.
+- Phases cover disjoint closes, so they cannot double-alert. Each has its own
+  concurrency group so none queues behind another.
 - **Every scheduled run sends a startup ping.** A phase GitHub never starts
   sends nothing — so a *missing* ping is how a skipped phase becomes visible.
+- Job length is capped by the **6-hour ceiling**; current runs are 5.15–5.65h.
 
 > **Requires a public repository.** Four daily multi-hour jobs far exceed the
 > 2,000 minutes allowed on private repos. Public repos get unlimited Actions
