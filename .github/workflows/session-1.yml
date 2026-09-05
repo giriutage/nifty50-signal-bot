@@ -1,4 +1,4 @@
-name: Session 1 (09:45-10:45)
+﻿name: Session 1 (09:45-10:45)
 
 # ---------------------------------------------------------------------------
 # The trading day is split into FOUR phases. Each covers three bar closes.
@@ -24,12 +24,17 @@ name: Session 1 (09:45-10:45)
 # ---------------------------------------------------------------------------
 #
 # Closes: 09:45, 10:15, 10:45 IST   (job ends ~10:46)
-# Triggers: UTC 00:07 -> 02:53  =  IST 05:37 -> 08:23
-# Margin from last trigger to first close: 82 min  (worst seen: 54)
+# Triggers: UTC 00:07 -> 00:53  =  IST 05:37 -> 06:23
+# Margin from last trigger to first close: 202 min
 # Longest run: 05:37 -> 10:46 = 5h09m, inside the 6h ceiling.
+#
+# The margin was 82 min and GitHub overran it: measured 2-4 Sep it now starts
+# +77 to +125 min after the last slot, up from +54 a week earlier. The ceiling
+# constrains only the EARLIEST trigger, so the last one can move back freely -
+# a job that starts early simply sleeps longer, which costs nothing.
 on:
   schedule:
-    - cron: '7,23,39,53 0-2 * * 1-5'
+    - cron: '7,23,39,53 0 * * 1-5'
 
 concurrency:
   group: session-1
